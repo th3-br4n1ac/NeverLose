@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>HR Data Test - Jan 5 2026 Run</title>
+    <style>
+        body { font-family: Arial; padding: 20px; background: #1a1a2e; color: #eee; }
+        .result { margin: 10px 0; padding: 15px; background: #16213e; border-radius: 8px; }
+        .success { border-left: 4px solid #22c55e; }
+        .error { border-left: 4px solid #ef4444; }
+        .info { border-left: 4px solid #3b82f6; }
+        button { padding: 10px 20px; background: #ff6b35; border: none; color: white; cursor: pointer; border-radius: 6px; margin: 5px; }
+        h1 { color: #ff6b35; }
+        pre { background: #0f0f1a; padding: 10px; border-radius: 4px; overflow-x: auto; font-size: 12px; }
+    </style>
+</head>
+<body>
+    <h1>HR Data Test - January 5, 2026 Run</h1>
+    
+    <div>
+        <button onclick="testWorkoutParsing()">1. Test Workout Parsing</button>
+        <button onclick="testHRRecords()">2. Test HR Records</button>
+        <button onclick="testGPXParsing()">3. Test GPX Parsing</button>
+        <button onclick="testTimeMatcher()">4. Test Time Matching</button>
+        <button onclick="testStravaHR()">5. Test Strava HR</button>
+        <button onclick="runFullTest()">Run All Tests</button>
+    </div>
+    
+    <div id="results"></div>
+
+    <script>
+        const results = document.getElementById('results');
+        
+        function log(msg, type = 'info') {
+            results.innerHTML += `<div class="result ${type}">${msg}</div>`;
+        }
+        
+        function clearResults() {
+            results.innerHTML = '';
+        }
+        
+        // Test 1: Parse workout from export.xml (stream to find specific workout)
+        async function testWorkoutParsing() {
+            log('<h3>Test 1: Workout Parsing</h3>', 'info');
+            log('Note: export.xml is ~100MB, searching via streaming...', 'info');
+            
+            try {
+                const response = await fetch('/apple_health_export/export.xml');
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                
+                let buffer = '';
+                let found = false;
+                let chunkCount = 0;
+                
+                while (!found) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    
+                    chunkCount++;
+                    buffer += decoder.decode(value, { stream: true });
+                    
+                    // Look for the Jan 5, 2026 workout
+                    const workoutMatch = buffer.match(/<Workout[^>]*startDate="2026-01-05 19:17:52[^"]*"[^>]*>[\s\S]*?<\/Workout>/);
+                    
+                    if (workoutMatch) {
+                        found = true;
+                        const workoutXml = workoutMatch[0];
+                        
+                        const startDateMatch = workoutXml.match(/startDate="([^"]+)"/);
+                        const durationMatch = workoutXml.match(/duration="([^"]+)"/);
+                        const hrStatsMatch = workoutXml.match(/WorkoutStatistics type="HKQuantityTypeIdentifierHeartRate"[^>]*average="([^"]+)"[^>]*minimum="([^"]+)"[^>]*maximum="([^"]+)"/);
+                        
+                        log(`<strong>Found Workout (after ${chunkCount} chunks):</strong><br>
+                            Start: ${startDateMatch?.[1]}<br>
+                            Duration: ${durationMatch?.[1]} min<br>
+                            HR Stats: avg=${hrStatsMatch?.[1]}, min=${hrStatsMatch?.[2]}, max=${hrStatsMatch?.[3]}`, 'success');
+                        
+                        const isoDate = startDateMatch[1].replace(' ', 'T').replace(' ', '');
+                        const parsedDate = new Date(isoDate);
+                        log(`<strong>Parsed date:</strong> ${parsedDate.toISOString()} (timestamp: ${parsedDate.getTime()})`, 'info');
+                        
+                        reader.cancel();
+                        return { startDate: parsedDate, duration: parseFloat(durationMatch[1]) };
+                    }
+                    
+                    // Keep last 50KB of buffer to catch workouts that span chunks
+                    if (buffer.length > 100000) {
+                        buffer = buffer.slice(-50000);
+                    }
+                    
+                    if (chunkCount % 50 === 0) {
+                        log(`Searching... ${chunkCount} chunks processed`, 'info');
+                    }
+                }
+                
+                if (!found) {
+                    log('Workout not found after scanning entire file!', 'error');
+                }
+            } catch (e) {
+                log(`Error: ${e.message}`, 'error');
+            }
+        }
+        
+        // Test 2: Count HR records for Jan 5 workout time range (streaming)
+        async function testHRRecords() {
+            log('<h3>Test 2: HR Records</h3>', 'info');
+            log('Streaming through export.xml to find HR records...', 'info');
+            
+            try {
+                const response = await fetch('/apple_health_export/export.xml');
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                
+                // Workout time range: 19:17:52 to 19:45:36 on Jan 5 2026
+                const workoutStart = new Date('2026-01-05T19:17:52-06:00').getTime();
+                const workoutEnd = new Date('2026-01-05T19:45:36-06:00').getTime();
+                
+                log(`Workout time range: ${new Date(workoutStart).toISOString()} to ${new Date(workoutEnd).toISOString()}`, 'info');
+                
+                let buffer = '';
+                let totalHRRecords = 0;
+                let matchingRecords = [];
+                let chunkCount = 0;
+                const seen = new Set();
+                
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    
+                    chunkCount++;
+                    buffer += decoder.decode(value, { stream: true });
+                    
+                    // Find HR records - NOTE: these are NOT self-closing, they end with > not />
+                    const hrPattern = /<Record[^>]*type="HKQuantityTypeIdentifierHeartRate"[^>]*startDate="([^"]+)"[^>]*value="(\d+)"[^>]*>/g;
+                    let match;
+                    let lastMatchEnd = 0;
+                    
+                    while ((match = hrPattern.exec(buffer)) !== null) {
+                        lastMatchEnd = match.index + match[0].length;
+                        const dateStr = match[1];
+                        const value = parseInt(match[2]);
+                        
+                        const key = `${dateStr}_${value}`;
+                        if (seen.has(key)) continue;
+                        seen.add(key);
+                        
+                        totalHRRecords++;
+                        
+                        const isoDate = dateStr.replace(' ', 'T').replace(' ', '');
+                        const timestamp = new Date(isoDate).getTime();
+                        
+                        if (timestamp >= workoutStart && timestamp <= workoutEnd) {
+                            matchingRecords.push({ time: timestamp, value, dateStr });
+                        }
+                    }
+                    
+                    // Keep unprocessed part
+                    if (lastMatchEnd > 0) {
+                        buffer = buffer.slice(lastMatchEnd);
+                    } else if (buffer.length > 100000) {
+                        buffer = buffer.slice(-50000);
+                    }
+                    
+                    if (chunkCount % 100 === 0) {
+                        log(`Processing... ${chunkCount} chunks, ${totalHRRecords} HR records found, ${matchingRecords.length} in workout range`, 'info');
+                    }
+                }
+                
+                log(`<strong>Total HR records in file:</strong> ${totalHRRecords}`, 'info');
+                log(`<strong>HR records matching workout time:</strong> ${matchingRecords.length}`, matchingRecords.length > 0 ? 'success' : 'error');
+                
+                if (matchingRecords.length > 0) {
+                    matchingRecords.sort((a, b) => a.time - b.time);
+                    const sample = matchingRecords.slice(0, 10).map(r => 
+                        `${new Date(r.time).toLocaleTimeString()} = ${r.value} bpm`
+                    ).join('<br>');
+                    log(`<strong>Sample HR values:</strong><br>${sample}`, 'info');
+                }
+                
+                return matchingRecords;
+            } catch (e) {
+                log(`Error: ${e.message}`, 'error');
+            }
+        }
+        
+        // Test 3: Parse GPX file
+        async function testGPXParsing() {
+            log('<h3>Test 3: GPX Parsing</h3>', 'info');
+            
+            try {
+                const response = await fetch('/apple_health_export/workout-routes/route_2026-01-05_7.45pm.gpx');
+                const gpxText = await response.text();
+                
+                const parser = new DOMParser();
+                const gpxDoc = parser.parseFromString(gpxText, 'text/xml');
+                const trackPoints = gpxDoc.querySelectorAll('trkpt');
+                
+                log(`<strong>Total track points:</strong> ${trackPoints.length}`, 'info');
+                
+                if (trackPoints.length > 0) {
+                    const firstPt = trackPoints[0];
+                    const lastPt = trackPoints[trackPoints.length - 1];
+                    
+                    const firstTime = firstPt.querySelector('time')?.textContent;
+                    const lastTime = lastPt.querySelector('time')?.textContent;
+                    
+                    const firstDate = new Date(firstTime);
+                    const lastDate = new Date(lastTime);
+                    
+                    log(`<strong>GPX Start:</strong> ${firstTime}<br>
+                         Parsed: ${firstDate.toISOString()}<br>
+                         Timestamp: ${firstDate.getTime()}`, 'success');
+                    
+                    log(`<strong>GPX End:</strong> ${lastTime}<br>
+                         Parsed: ${lastDate.toISOString()}<br>
+                         Timestamp: ${lastDate.getTime()}`, 'success');
+                    
+                    return { startTime: firstDate, endTime: lastDate };
+                }
+            } catch (e) {
+                log(`Error: ${e.message}`, 'error');
+            }
+        }
+        
+        // Test 4: Time matching between GPX and Workout
+        async function testTimeMatcher() {
+            log('<h3>Test 4: Time Matching</h3>', 'info');
+            
+            // Workout start from export.xml (local time with offset)
+            const workoutStartStr = '2026-01-05 19:17:52 -0600';
+            const workoutIsoDate = workoutStartStr.replace(' ', 'T').replace(' ', '');
+            const workoutStart = new Date(workoutIsoDate);
+            
+            // GPX start (UTC time)  
+            const gpxStartStr = '2026-01-06T01:17:51Z';
+            const gpxStart = new Date(gpxStartStr);
+            
+            log(`<strong>Workout start:</strong> "${workoutStartStr}"<br>
+                 Parsed ISO: "${workoutIsoDate}"<br>
+                 Date object: ${workoutStart.toISOString()}<br>
+                 Timestamp: ${workoutStart.getTime()}`, 'info');
+            
+            log(`<strong>GPX start:</strong> "${gpxStartStr}"<br>
+                 Date object: ${gpxStart.toISOString()}<br>
+                 Timestamp: ${gpxStart.getTime()}`, 'info');
+            
+            const timeDiff = Math.abs(gpxStart.getTime() - workoutStart.getTime());
+            const timeDiffSeconds = timeDiff / 1000;
+            
+            log(`<strong>Time difference:</strong> ${timeDiffSeconds} seconds (${timeDiff}ms)`, 
+                timeDiffSeconds < 300 ? 'success' : 'error');
+            
+            if (timeDiffSeconds < 300) {
+                log('✅ Times match within 5 minute tolerance - linking should work!', 'success');
+            } else {
+                log('❌ Times do NOT match - linking will fail!', 'error');
+            }
+        }
+        
+        // Test 5: Strava HR data
+        async function testStravaHR() {
+            log('<h3>Test 5: Strava HR Data</h3>', 'info');
+            
+            // Check if Strava is connected
+            const token = localStorage.getItem('strava_access_token');
+            if (!token) {
+                log('Strava not connected. Connect Strava on the main app to test this.', 'info');
+                return;
+            }
+            
+            log('Strava connected. Fetching recent activities...', 'info');
+            
+            try {
+                // Fetch activities
+                const response = await fetch('/api/strava/activities?per_page=5', {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+                const activities = await response.json();
+                
+                if (activities.errors) {
+                    log(`Strava API error: ${JSON.stringify(activities.errors)}`, 'error');
+                    return;
+                }
+                
+                log(`Found ${activities.length} recent activities`, 'info');
+                
+                // Find the Jan 5, 2026 activity or use the most recent run
+                let targetActivity = activities.find(a => 
+                    a.type === 'Run' && a.start_date.includes('2026-01-05')
+                );
+                
+                if (!targetActivity) {
+                    targetActivity = activities.find(a => a.type === 'Run');
+                }
+                
+                if (!targetActivity) {
+                    log('No running activities found', 'error');
+                    return;
+                }
+                
+                log(`<strong>Testing with activity:</strong> ${targetActivity.name}<br>
+                     ID: ${targetActivity.id}<br>
+                     Date: ${targetActivity.start_date}<br>
+                     Has HR: ${targetActivity.has_heartrate ? 'Yes' : 'No'}<br>
+                     Avg HR: ${targetActivity.average_heartrate || 'N/A'}`, 'info');
+                
+                if (!targetActivity.has_heartrate) {
+                    log('This activity does not have heart rate data recorded', 'error');
+                    return;
+                }
+                
+                // Fetch HR stream
+                log('Fetching detailed HR stream...', 'info');
+                const streamResponse = await fetch(
+                    `/api/strava/activities/${targetActivity.id}/streams?keys=heartrate,time`,
+                    { headers: { 'Authorization': `Bearer ${token}` } }
+                );
+                const streams = await streamResponse.json();
+                
+                if (streams.heartrate && streams.time) {
+                    log(`<strong>HR Stream found!</strong><br>
+                         Data points: ${streams.heartrate.data.length}<br>
+                         Sample values: ${streams.heartrate.data.slice(0, 10).join(', ')}...`, 'success');
+                    
+                    // Show how to convert to our format
+                    const startTime = new Date(targetActivity.start_date).getTime();
+                    const sample = streams.heartrate.data.slice(0, 5).map((hr, i) => {
+                        const time = startTime + (streams.time.data[i] * 1000);
+                        return `${new Date(time).toLocaleTimeString()} = ${hr} bpm`;
+                    }).join('<br>');
+                    log(`<strong>Converted to our format:</strong><br>${sample}`, 'success');
+                } else {
+                    log(`No HR stream data: ${JSON.stringify(streams)}`, 'error');
+                }
+                
+            } catch (e) {
+                log(`Error: ${e.message}`, 'error');
+            }
+        }
+
+        async function runFullTest() {
+            clearResults();
+            log('<h2>Full HR Data Flow Test</h2>', 'info');
+            
+            await testWorkoutParsing();
+            await testHRRecords();
+            await testGPXParsing();
+            await testTimeMatcher();
+            await testStravaHR();
+            
+            log('<h3>Summary</h3>', 'info');
+            log('If all tests pass, the issue is likely in the streaming parser not capturing all HR records, or the workout not being saved with heartRateData to IndexedDB.', 'info');
+        }
+    </script>
+</body>
+</html>
+

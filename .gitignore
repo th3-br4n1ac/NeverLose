@@ -1,0 +1,21 @@
+# Dependencies
+node_modules/
+
+# Environment variables (keep secrets out of git)
+.env
+
+# Apple Health data (personal data - don't commit)
+apple_health_export/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Logs
+*.log
+npm-debug.log*
+

@@ -1,0 +1,1451 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Apple Health Running Workouts Viewer</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-primary: #0a0a0f;
+            --bg-secondary: #12121a;
+            --bg-tertiary: #1a1a25;
+            --bg-card: #15151f;
+            --accent-primary: #ff6b35;
+            --accent-secondary: #f7931e;
+            --accent-gradient: linear-gradient(135deg, #ff6b35 0%, #f7931e 100%);
+            --text-primary: #ffffff;
+            --text-secondary: #a0a0b0;
+            --text-muted: #606070;
+            --border-color: #2a2a3a;
+            --success: #22c55e;
+            --warning: #eab308;
+            --danger: #ef4444;
+            --shadow-glow: 0 0 60px rgba(255, 107, 53, 0.15);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Outfit', sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+            line-height: 1.6;
+        }
+
+        /* Animated background */
+        .bg-pattern {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 0;
+            background: 
+                radial-gradient(ellipse 80% 50% at 50% -20%, rgba(255, 107, 53, 0.12), transparent),
+                radial-gradient(ellipse 60% 40% at 100% 50%, rgba(247, 147, 30, 0.08), transparent),
+                radial-gradient(ellipse 60% 40% at 0% 80%, rgba(255, 107, 53, 0.06), transparent);
+        }
+
+        .container {
+            position: relative;
+            z-index: 1;
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 2rem;
+        }
+
+        header {
+            text-align: center;
+            margin-bottom: 3rem;
+        }
+
+        .logo {
+            display: inline-flex;
+            align-items: center;
+            gap: 1rem;
+            margin-bottom: 1rem;
+        }
+
+        .logo-icon {
+            width: 56px;
+            height: 56px;
+            background: var(--accent-gradient);
+            border-radius: 16px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 28px;
+            box-shadow: var(--shadow-glow);
+        }
+
+        h1 {
+            font-size: 2.5rem;
+            font-weight: 700;
+            background: var(--accent-gradient);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .subtitle {
+            color: var(--text-secondary);
+            font-size: 1.1rem;
+            font-weight: 300;
+        }
+
+        /* Upload Zone */
+        .upload-zone {
+            background: var(--bg-card);
+            border: 2px dashed var(--border-color);
+            border-radius: 20px;
+            padding: 3rem;
+            text-align: center;
+            margin-bottom: 2rem;
+            transition: all 0.3s ease;
+            cursor: pointer;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .upload-zone::before {
+            content: '';
+            position: absolute;
+            inset: 0;
+            background: var(--accent-gradient);
+            opacity: 0;
+            transition: opacity 0.3s ease;
+        }
+
+        .upload-zone:hover,
+        .upload-zone.dragover {
+            border-color: var(--accent-primary);
+            transform: translateY(-2px);
+        }
+
+        .upload-zone:hover::before,
+        .upload-zone.dragover::before {
+            opacity: 0.05;
+        }
+
+        .upload-zone > * {
+            position: relative;
+            z-index: 1;
+        }
+
+        .upload-icon {
+            width: 80px;
+            height: 80px;
+            margin: 0 auto 1.5rem;
+            background: var(--bg-tertiary);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 2.5rem;
+        }
+
+        .upload-zone h2 {
+            font-size: 1.5rem;
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+        }
+
+        .upload-zone p {
+            color: var(--text-secondary);
+        }
+
+        .upload-zone input[type="file"] {
+            display: none;
+        }
+
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.875rem 1.75rem;
+            background: var(--accent-gradient);
+            color: white;
+            border: none;
+            border-radius: 12px;
+            font-family: inherit;
+            font-size: 1rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            margin-top: 1.5rem;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 30px rgba(255, 107, 53, 0.3);
+        }
+
+        /* Progress Section */
+        .progress-section {
+            display: none;
+            background: var(--bg-card);
+            border-radius: 16px;
+            padding: 2rem;
+            margin-bottom: 2rem;
+        }
+
+        .progress-section.visible {
+            display: block;
+        }
+
+        .progress-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1rem;
+        }
+
+        .progress-title {
+            font-weight: 500;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        .spinner {
+            width: 20px;
+            height: 20px;
+            border: 2px solid var(--border-color);
+            border-top-color: var(--accent-primary);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .progress-bar-container {
+            height: 8px;
+            background: var(--bg-tertiary);
+            border-radius: 4px;
+            overflow: hidden;
+        }
+
+        .progress-bar {
+            height: 100%;
+            background: var(--accent-gradient);
+            border-radius: 4px;
+            transition: width 0.3s ease;
+            width: 0%;
+        }
+
+        .progress-stats {
+            display: flex;
+            gap: 2rem;
+            margin-top: 1rem;
+            color: var(--text-secondary);
+            font-size: 0.9rem;
+        }
+
+        /* Stats Overview */
+        .stats-overview {
+            display: none;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1rem;
+            margin-bottom: 2rem;
+        }
+
+        .stats-overview.visible {
+            display: grid;
+        }
+
+        .stat-card {
+            background: var(--bg-card);
+            border-radius: 16px;
+            padding: 1.5rem;
+            border: 1px solid var(--border-color);
+        }
+
+        .stat-card .stat-label {
+            color: var(--text-secondary);
+            font-size: 0.85rem;
+            margin-bottom: 0.5rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .stat-card .stat-value {
+            font-size: 1.75rem;
+            font-weight: 600;
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        .stat-card .stat-unit {
+            font-size: 0.9rem;
+            color: var(--text-secondary);
+            font-weight: 400;
+        }
+
+        /* Filters & Controls */
+        .controls {
+            display: none;
+            flex-wrap: wrap;
+            gap: 1rem;
+            margin-bottom: 1.5rem;
+            align-items: center;
+        }
+
+        .controls.visible {
+            display: flex;
+        }
+
+        .search-box {
+            flex: 1;
+            min-width: 250px;
+            position: relative;
+        }
+
+        .search-box input {
+            width: 100%;
+            padding: 0.875rem 1rem 0.875rem 3rem;
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            color: var(--text-primary);
+            font-family: inherit;
+            font-size: 0.95rem;
+            transition: all 0.3s ease;
+        }
+
+        .search-box input:focus {
+            outline: none;
+            border-color: var(--accent-primary);
+        }
+
+        .search-box::before {
+            content: '🔍';
+            position: absolute;
+            left: 1rem;
+            top: 50%;
+            transform: translateY(-50%);
+            font-size: 1rem;
+        }
+
+        select {
+            padding: 0.875rem 2.5rem 0.875rem 1rem;
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            color: var(--text-primary);
+            font-family: inherit;
+            font-size: 0.95rem;
+            cursor: pointer;
+            appearance: none;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%23a0a0b0'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M19 9l-7 7-7-7'%3E%3C/path%3E%3C/svg%3E");
+            background-repeat: no-repeat;
+            background-position: right 0.75rem center;
+            background-size: 1rem;
+        }
+
+        select:focus {
+            outline: none;
+            border-color: var(--accent-primary);
+        }
+
+        .unit-toggle {
+            display: flex;
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            overflow: hidden;
+        }
+
+        .unit-toggle button {
+            padding: 0.875rem 1.25rem;
+            background: transparent;
+            border: none;
+            color: var(--text-secondary);
+            font-family: inherit;
+            font-size: 0.9rem;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .unit-toggle button.active {
+            background: var(--accent-gradient);
+            color: white;
+        }
+
+        /* Workouts Table */
+        .workouts-section {
+            display: none;
+        }
+
+        .workouts-section.visible {
+            display: block;
+        }
+
+        .workouts-table-wrapper {
+            background: var(--bg-card);
+            border-radius: 20px;
+            border: 1px solid var(--border-color);
+            overflow: hidden;
+        }
+
+        .table-scroll {
+            overflow-x: auto;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            min-width: 900px;
+        }
+
+        thead {
+            background: var(--bg-tertiary);
+        }
+
+        th {
+            padding: 1rem 1.25rem;
+            text-align: left;
+            font-weight: 500;
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            white-space: nowrap;
+            cursor: pointer;
+            transition: color 0.3s ease;
+            user-select: none;
+        }
+
+        th:hover {
+            color: var(--accent-primary);
+        }
+
+        th.sorted {
+            color: var(--accent-primary);
+        }
+
+        th .sort-arrow {
+            display: inline-block;
+            margin-left: 0.25rem;
+            opacity: 0.5;
+        }
+
+        th.sorted .sort-arrow {
+            opacity: 1;
+        }
+
+        tbody tr {
+            border-bottom: 1px solid var(--border-color);
+            transition: background 0.2s ease;
+        }
+
+        tbody tr:last-child {
+            border-bottom: none;
+        }
+
+        tbody tr:hover {
+            background: rgba(255, 107, 53, 0.05);
+        }
+
+        td {
+            padding: 1rem 1.25rem;
+            font-size: 0.95rem;
+        }
+
+        .date-cell {
+            white-space: nowrap;
+        }
+
+        .date-cell .date {
+            font-weight: 500;
+        }
+
+        .date-cell .time {
+            color: var(--text-secondary);
+            font-size: 0.85rem;
+        }
+
+        .metric-cell {
+            font-family: 'JetBrains Mono', monospace;
+            font-weight: 500;
+        }
+
+        .metric-cell .unit {
+            color: var(--text-secondary);
+            font-size: 0.8rem;
+            font-weight: 400;
+        }
+
+        .hr-cell {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        .hr-bar {
+            flex: 1;
+            height: 6px;
+            background: var(--bg-tertiary);
+            border-radius: 3px;
+            position: relative;
+            min-width: 60px;
+        }
+
+        .hr-bar-fill {
+            position: absolute;
+            height: 100%;
+            border-radius: 3px;
+            background: linear-gradient(90deg, var(--success), var(--warning), var(--danger));
+        }
+
+        .hr-values {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.85rem;
+            white-space: nowrap;
+        }
+
+        .hr-values .avg {
+            color: var(--accent-primary);
+            font-weight: 600;
+        }
+
+        .hr-values .range {
+            color: var(--text-muted);
+        }
+
+        .pace-cell {
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        .source-badge {
+            display: inline-block;
+            padding: 0.25rem 0.75rem;
+            background: var(--bg-tertiary);
+            border-radius: 6px;
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+        }
+
+        /* Empty State */
+        .empty-state {
+            text-align: center;
+            padding: 4rem 2rem;
+            color: var(--text-secondary);
+        }
+
+        .empty-state .icon {
+            font-size: 3rem;
+            margin-bottom: 1rem;
+        }
+
+        /* Pagination */
+        .pagination {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 1rem 1.5rem;
+            border-top: 1px solid var(--border-color);
+            flex-wrap: wrap;
+            gap: 1rem;
+        }
+
+        .pagination-info {
+            color: var(--text-secondary);
+            font-size: 0.9rem;
+        }
+
+        .pagination-controls {
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        .pagination-controls button {
+            padding: 0.5rem 1rem;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            color: var(--text-primary);
+            font-family: inherit;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .pagination-controls button:hover:not(:disabled) {
+            border-color: var(--accent-primary);
+            background: rgba(255, 107, 53, 0.1);
+        }
+
+        .pagination-controls button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .pagination-controls .page-numbers {
+            display: flex;
+            gap: 0.25rem;
+        }
+
+        .pagination-controls .page-numbers button {
+            min-width: 40px;
+        }
+
+        .pagination-controls .page-numbers button.active {
+            background: var(--accent-gradient);
+            border-color: transparent;
+        }
+
+        /* Export Button */
+        .export-btn {
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border-color);
+            color: var(--text-primary);
+        }
+
+        .export-btn:hover {
+            border-color: var(--accent-primary);
+            box-shadow: none;
+            transform: none;
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .container {
+                padding: 1rem;
+            }
+
+            h1 {
+                font-size: 1.75rem;
+            }
+
+            .upload-zone {
+                padding: 2rem;
+            }
+
+            .stats-overview {
+                grid-template-columns: repeat(2, 1fr);
+            }
+
+            .stat-card .stat-value {
+                font-size: 1.25rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="bg-pattern"></div>
+    
+    <div class="container">
+        <header>
+            <div class="logo">
+                <div class="logo-icon">🏃</div>
+                <div>
+                    <h1>Running Workouts</h1>
+                    <p class="subtitle">Apple Health Export Analyzer</p>
+                </div>
+            </div>
+        </header>
+
+        <!-- Upload Zone -->
+        <div class="upload-zone" id="uploadZone">
+            <div class="upload-icon">📁</div>
+            <h2>Drop your export.xml here</h2>
+            <p>or click to browse • Supports files up to 500MB+</p>
+            <button class="btn">
+                <span>Choose File</span>
+            </button>
+            <input type="file" id="fileInput" accept=".xml">
+        </div>
+
+        <!-- Progress Section -->
+        <div class="progress-section" id="progressSection">
+            <div class="progress-header">
+                <div class="progress-title">
+                    <div class="spinner"></div>
+                    <span id="progressTitle">Reading file...</span>
+                </div>
+                <span id="progressPercent">0%</span>
+            </div>
+            <div class="progress-bar-container">
+                <div class="progress-bar" id="progressBar"></div>
+            </div>
+            <div class="progress-stats">
+                <span id="progressSize">0 MB read</span>
+                <span id="progressWorkouts">0 running workouts found</span>
+            </div>
+        </div>
+
+        <!-- Stats Overview -->
+        <div class="stats-overview" id="statsOverview">
+            <div class="stat-card">
+                <div class="stat-label">📊 Total Runs</div>
+                <div class="stat-value" id="totalRuns">0</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">📏 Total Distance</div>
+                <div class="stat-value"><span id="totalDistance">0</span> <span class="stat-unit" id="distanceUnit">km</span></div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">⏱️ Total Time</div>
+                <div class="stat-value" id="totalTime">0h 0m</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">🔥 Total Calories</div>
+                <div class="stat-value"><span id="totalCalories">0</span> <span class="stat-unit">cal</span></div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">💓 Avg Heart Rate</div>
+                <div class="stat-value"><span id="avgHeartRate">--</span> <span class="stat-unit">bpm</span></div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">⚡ Avg Pace</div>
+                <div class="stat-value" id="avgPace">--:--</div>
+            </div>
+        </div>
+
+        <!-- Controls -->
+        <div class="controls" id="controls">
+            <div class="search-box">
+                <input type="text" id="searchInput" placeholder="Search by date, source...">
+            </div>
+            <select id="yearFilter">
+                <option value="">All Years</option>
+            </select>
+            <select id="sortBy">
+                <option value="date-desc">Newest First</option>
+                <option value="date-asc">Oldest First</option>
+                <option value="distance-desc">Longest Distance</option>
+                <option value="distance-asc">Shortest Distance</option>
+                <option value="duration-desc">Longest Duration</option>
+                <option value="duration-asc">Shortest Duration</option>
+                <option value="pace-asc">Fastest Pace</option>
+                <option value="pace-desc">Slowest Pace</option>
+                <option value="calories-desc">Most Calories</option>
+                <option value="calories-asc">Least Calories</option>
+            </select>
+            <div class="unit-toggle">
+                <button id="unitKm" class="active">km</button>
+                <button id="unitMi">mi</button>
+            </div>
+            <button class="btn export-btn" id="exportBtn">
+                📥 Export CSV
+            </button>
+        </div>
+
+        <!-- Workouts Section -->
+        <div class="workouts-section" id="workoutsSection">
+            <div class="workouts-table-wrapper">
+                <div class="table-scroll">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th data-sort="date">Date <span class="sort-arrow">↓</span></th>
+                                <th data-sort="duration">Duration <span class="sort-arrow">↓</span></th>
+                                <th data-sort="distance">Distance <span class="sort-arrow">↓</span></th>
+                                <th data-sort="pace">Pace <span class="sort-arrow">↓</span></th>
+                                <th data-sort="calories">Calories <span class="sort-arrow">↓</span></th>
+                                <th>Heart Rate</th>
+                                <th>Cadence</th>
+                                <th>Stride</th>
+                                <th>Source</th>
+                            </tr>
+                        </thead>
+                        <tbody id="workoutsBody">
+                        </tbody>
+                    </table>
+                </div>
+                <div class="pagination" id="pagination">
+                    <div class="pagination-info">
+                        Showing <span id="showingStart">0</span>-<span id="showingEnd">0</span> of <span id="totalFiltered">0</span> workouts
+                    </div>
+                    <div class="pagination-controls">
+                        <button id="prevPage">← Prev</button>
+                        <div class="page-numbers" id="pageNumbers"></div>
+                        <button id="nextPage">Next →</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // State
+        let workouts = [];
+        let filteredWorkouts = [];
+        let currentPage = 1;
+        let pageSize = 20;
+        let useMetric = true;
+        let sortColumn = 'date';
+        let sortDirection = 'desc';
+
+        // DOM Elements
+        const uploadZone = document.getElementById('uploadZone');
+        const fileInput = document.getElementById('fileInput');
+        const progressSection = document.getElementById('progressSection');
+        const progressBar = document.getElementById('progressBar');
+        const progressTitle = document.getElementById('progressTitle');
+        const progressPercent = document.getElementById('progressPercent');
+        const progressSize = document.getElementById('progressSize');
+        const progressWorkouts = document.getElementById('progressWorkouts');
+        const statsOverview = document.getElementById('statsOverview');
+        const controls = document.getElementById('controls');
+        const workoutsSection = document.getElementById('workoutsSection');
+        const workoutsBody = document.getElementById('workoutsBody');
+        const searchInput = document.getElementById('searchInput');
+        const yearFilter = document.getElementById('yearFilter');
+        const sortBy = document.getElementById('sortBy');
+        const unitKm = document.getElementById('unitKm');
+        const unitMi = document.getElementById('unitMi');
+        const exportBtn = document.getElementById('exportBtn');
+        const pagination = document.getElementById('pagination');
+
+        // Upload handlers
+        uploadZone.addEventListener('click', () => fileInput.click());
+        fileInput.addEventListener('change', (e) => {
+            if (e.target.files.length > 0) {
+                processFile(e.target.files[0]);
+            }
+        });
+
+        uploadZone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            uploadZone.classList.add('dragover');
+        });
+
+        uploadZone.addEventListener('dragleave', () => {
+            uploadZone.classList.remove('dragover');
+        });
+
+        uploadZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadZone.classList.remove('dragover');
+            if (e.dataTransfer.files.length > 0) {
+                processFile(e.dataTransfer.files[0]);
+            }
+        });
+
+        // Process file with streaming
+        async function processFile(file) {
+            workouts = [];
+            uploadZone.style.display = 'none';
+            progressSection.classList.add('visible');
+            
+            const fileSize = file.size;
+            const chunkSize = 1024 * 1024; // 1MB chunks
+            let bytesRead = 0;
+            let buffer = '';
+            let workoutCount = 0;
+
+            const reader = file.stream().getReader();
+            const decoder = new TextDecoder();
+
+            try {
+                while (true) {
+                    const { done, value } = await reader.read();
+                    
+                    if (done) {
+                        // Process remaining buffer
+                        if (buffer.length > 0) {
+                            extractWorkouts(buffer);
+                        }
+                        break;
+                    }
+
+                    bytesRead += value.length;
+                    buffer += decoder.decode(value, { stream: true });
+
+                    // Extract complete workout elements from buffer
+                    const workoutsExtracted = extractWorkouts(buffer);
+                    workoutCount += workoutsExtracted.count;
+                    buffer = workoutsExtracted.remaining;
+
+                    // Update progress
+                    const percent = Math.round((bytesRead / fileSize) * 100);
+                    progressBar.style.width = `${percent}%`;
+                    progressPercent.textContent = `${percent}%`;
+                    progressSize.textContent = `${(bytesRead / 1024 / 1024).toFixed(1)} MB read`;
+                    progressWorkouts.textContent = `${workouts.length} running workouts found`;
+                    progressTitle.textContent = 'Parsing workouts...';
+
+                    // Allow UI updates
+                    await new Promise(r => setTimeout(r, 0));
+                }
+
+                // Finished processing
+                progressTitle.textContent = 'Complete!';
+                document.querySelector('#progressSection .spinner').style.display = 'none';
+                
+                setTimeout(() => {
+                    progressSection.classList.remove('visible');
+                    showResults();
+                }, 500);
+
+            } catch (error) {
+                console.error('Error processing file:', error);
+                progressTitle.textContent = 'Error processing file!';
+                document.querySelector('#progressSection .spinner').style.display = 'none';
+            }
+        }
+
+        // Extract workout elements from buffer
+        function extractWorkouts(buffer) {
+            let count = 0;
+            let remaining = buffer;
+            
+            // Find all complete Workout elements for running
+            const workoutPattern = /<Workout[^>]*workoutActivityType="HKWorkoutActivityTypeRunning"[^>]*>[\s\S]*?<\/Workout>/g;
+            let match;
+            let lastIndex = 0;
+
+            // First, handle simpler cases (self-closing or single line)
+            const simplePattern = /<Workout[^>]*workoutActivityType="HKWorkoutActivityTypeRunning"[^>]*\/>/g;
+            let simpleMatch;
+            while ((simpleMatch = simplePattern.exec(buffer)) !== null) {
+                const workout = parseWorkoutElement(simpleMatch[0]);
+                if (workout) {
+                    workouts.push(workout);
+                    count++;
+                }
+            }
+
+            // Find complete workout blocks (with children)
+            let searchStart = 0;
+            while (searchStart < buffer.length) {
+                const workoutStart = buffer.indexOf('<Workout', searchStart);
+                if (workoutStart === -1) break;
+
+                // Check if it's a running workout
+                const tagEnd = buffer.indexOf('>', workoutStart);
+                if (tagEnd === -1) {
+                    remaining = buffer.slice(workoutStart);
+                    break;
+                }
+
+                const openingTag = buffer.slice(workoutStart, tagEnd + 1);
+                
+                // Self-closing tag
+                if (openingTag.endsWith('/>')) {
+                    searchStart = tagEnd + 1;
+                    continue;
+                }
+
+                // Find closing tag
+                const closingTag = '</Workout>';
+                const workoutEnd = buffer.indexOf(closingTag, tagEnd);
+                
+                if (workoutEnd === -1) {
+                    remaining = buffer.slice(workoutStart);
+                    break;
+                }
+
+                if (openingTag.includes('HKWorkoutActivityTypeRunning')) {
+                    const workoutXml = buffer.slice(workoutStart, workoutEnd + closingTag.length);
+                    const workout = parseWorkoutElement(workoutXml);
+                    if (workout) {
+                        workouts.push(workout);
+                        count++;
+                    }
+                }
+
+                lastIndex = workoutEnd + closingTag.length;
+                searchStart = lastIndex;
+            }
+
+            // Keep unparsed portion (last incomplete element)
+            if (lastIndex > 0) {
+                remaining = buffer.slice(lastIndex);
+            }
+
+            return { count, remaining };
+        }
+
+        // Parse a single workout element
+        function parseWorkoutElement(xml) {
+            try {
+                // Parse attributes from the Workout tag
+                const workout = {
+                    startDate: extractAttribute(xml, 'startDate'),
+                    endDate: extractAttribute(xml, 'endDate'),
+                    duration: parseFloat(extractAttribute(xml, 'duration')) || 0,
+                    durationUnit: extractAttribute(xml, 'durationUnit') || 'min',
+                    sourceName: extractAttribute(xml, 'sourceName') || 'Unknown',
+                    creationDate: extractAttribute(xml, 'creationDate'),
+                    distance: 0,
+                    distanceUnit: 'km',
+                    calories: 0,
+                    heartRateAvg: null,
+                    heartRateMin: null,
+                    heartRateMax: null,
+                    cadenceAvg: null,
+                    strideLengthAvg: null,
+                    speedAvg: null
+                };
+
+                // Parse WorkoutStatistics
+                const statsPattern = /<WorkoutStatistics[^>]+\/>/g;
+                let statsMatch;
+                
+                while ((statsMatch = statsPattern.exec(xml)) !== null) {
+                    const statXml = statsMatch[0];
+                    const type = extractAttribute(statXml, 'type');
+                    
+                    switch (type) {
+                        case 'HKQuantityTypeIdentifierDistanceWalkingRunning':
+                            workout.distance = parseFloat(extractAttribute(statXml, 'sum')) || 0;
+                            workout.distanceUnit = extractAttribute(statXml, 'unit') || 'mi';
+                            break;
+                        case 'HKQuantityTypeIdentifierActiveEnergyBurned':
+                            workout.calories = parseFloat(extractAttribute(statXml, 'sum')) || 0;
+                            break;
+                        case 'HKQuantityTypeIdentifierHeartRate':
+                            workout.heartRateAvg = parseFloat(extractAttribute(statXml, 'average')) || null;
+                            workout.heartRateMin = parseFloat(extractAttribute(statXml, 'minimum')) || null;
+                            workout.heartRateMax = parseFloat(extractAttribute(statXml, 'maximum')) || null;
+                            break;
+                        case 'HKQuantityTypeIdentifierRunningStrideLength':
+                            workout.strideLengthAvg = parseFloat(extractAttribute(statXml, 'average')) || null;
+                            break;
+                        case 'HKQuantityTypeIdentifierRunningSpeed':
+                            workout.speedAvg = parseFloat(extractAttribute(statXml, 'average')) || null;
+                            workout.speedUnit = extractAttribute(statXml, 'unit') || 'mi/hr';
+                            break;
+                    }
+                }
+
+                // Try to get step count for cadence calculation
+                const stepMatch = xml.match(/<WorkoutStatistics[^>]*type="HKQuantityTypeIdentifierStepCount"[^>]*\/>/);
+                if (stepMatch) {
+                    const steps = parseFloat(extractAttribute(stepMatch[0], 'sum')) || 0;
+                    if (workout.duration > 0) {
+                        workout.cadenceAvg = Math.round(steps / workout.duration); // steps per minute
+                    }
+                }
+
+                // Normalize distance to km for internal storage
+                if (workout.distanceUnit === 'mi') {
+                    workout.distanceKm = workout.distance * 1.60934;
+                    workout.distanceMi = workout.distance;
+                } else {
+                    workout.distanceKm = workout.distance;
+                    workout.distanceMi = workout.distance / 1.60934;
+                }
+
+                // Parse date (format: "2022-09-25 17:42:57 -0600")
+                if (workout.startDate) {
+                    // Replace first space with T, remove space before timezone
+                    const isoDate = workout.startDate.replace(' ', 'T').replace(' ', '');
+                    workout.dateObj = new Date(isoDate);
+                    workout.year = workout.dateObj.getFullYear();
+                    // Create searchable date string with full month name
+                    workout.displayDate = workout.dateObj.toLocaleDateString('en-US', { 
+                        weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' 
+                    });
+                }
+
+                return workout;
+            } catch (e) {
+                console.error('Error parsing workout:', e);
+                return null;
+            }
+        }
+
+        // Extract XML attribute value
+        function extractAttribute(xml, attr) {
+            const pattern = new RegExp(`${attr}="([^"]*)"`, 'i');
+            const match = xml.match(pattern);
+            return match ? decodeXmlEntities(match[1]) : null;
+        }
+
+        // Decode XML entities
+        function decodeXmlEntities(str) {
+            return str
+                .replace(/&lt;/g, '<')
+                .replace(/&gt;/g, '>')
+                .replace(/&amp;/g, '&')
+                .replace(/&quot;/g, '"')
+                .replace(/&apos;/g, "'");
+        }
+
+        // Show results
+        function showResults() {
+            if (workouts.length === 0) {
+                workoutsSection.classList.add('visible');
+                workoutsBody.innerHTML = `
+                    <tr>
+                        <td colspan="9">
+                            <div class="empty-state">
+                                <div class="icon">🏃‍♂️</div>
+                                <h3>No running workouts found</h3>
+                                <p>Make sure your export.xml contains running workout data</p>
+                            </div>
+                        </td>
+                    </tr>
+                `;
+                return;
+            }
+
+            // Sort by date descending by default
+            workouts.sort((a, b) => b.dateObj - a.dateObj);
+            filteredWorkouts = [...workouts];
+
+            // Update stats
+            updateStats();
+            
+            // Populate year filter
+            populateYearFilter();
+
+            // Show sections
+            statsOverview.classList.add('visible');
+            controls.classList.add('visible');
+            workoutsSection.classList.add('visible');
+
+            // Render table
+            renderTable();
+        }
+
+        // Update stats overview
+        function updateStats() {
+            const data = filteredWorkouts;
+            
+            document.getElementById('totalRuns').textContent = data.length.toLocaleString();
+            
+            const totalDistanceKm = data.reduce((sum, w) => sum + (w.distanceKm || 0), 0);
+            const totalDistanceMi = totalDistanceKm / 1.60934;
+            document.getElementById('totalDistance').textContent = useMetric 
+                ? totalDistanceKm.toFixed(1) 
+                : totalDistanceMi.toFixed(1);
+            document.getElementById('distanceUnit').textContent = useMetric ? 'km' : 'mi';
+
+            const totalMinutes = data.reduce((sum, w) => sum + (w.duration || 0), 0);
+            const hours = Math.floor(totalMinutes / 60);
+            const mins = Math.round(totalMinutes % 60);
+            document.getElementById('totalTime').textContent = `${hours}h ${mins}m`;
+
+            const totalCalories = data.reduce((sum, w) => sum + (w.calories || 0), 0);
+            document.getElementById('totalCalories').textContent = Math.round(totalCalories).toLocaleString();
+
+            const hrWorkouts = data.filter(w => w.heartRateAvg);
+            if (hrWorkouts.length > 0) {
+                const avgHr = hrWorkouts.reduce((sum, w) => sum + w.heartRateAvg, 0) / hrWorkouts.length;
+                document.getElementById('avgHeartRate').textContent = Math.round(avgHr);
+            }
+
+            // Calculate average pace
+            if (totalDistanceKm > 0 && totalMinutes > 0) {
+                const pacePerKm = totalMinutes / totalDistanceKm;
+                const pacePerMi = totalMinutes / totalDistanceMi;
+                const pace = useMetric ? pacePerKm : pacePerMi;
+                const paceMin = Math.floor(pace);
+                const paceSec = Math.round((pace - paceMin) * 60);
+                document.getElementById('avgPace').textContent = `${paceMin}:${paceSec.toString().padStart(2, '0')} /${useMetric ? 'km' : 'mi'}`;
+            }
+        }
+
+        // Populate year filter
+        function populateYearFilter() {
+            const years = [...new Set(workouts.map(w => w.year).filter(Boolean))].sort((a, b) => b - a);
+            yearFilter.innerHTML = '<option value="">All Years</option>' + 
+                years.map(y => `<option value="${y}">${y}</option>`).join('');
+        }
+
+        // Render table
+        function renderTable() {
+            const start = (currentPage - 1) * pageSize;
+            const end = Math.min(start + pageSize, filteredWorkouts.length);
+            const pageData = filteredWorkouts.slice(start, end);
+
+            if (pageData.length === 0) {
+                workoutsBody.innerHTML = `
+                    <tr>
+                        <td colspan="9">
+                            <div class="empty-state">
+                                <div class="icon">🔍</div>
+                                <h3>No workouts match your filters</h3>
+                                <p>Try adjusting your search or filters</p>
+                            </div>
+                        </td>
+                    </tr>
+                `;
+                updatePagination();
+                return;
+            }
+
+            workoutsBody.innerHTML = pageData.map(w => {
+                const date = w.dateObj ? w.dateObj.toLocaleDateString('en-US', { 
+                    month: 'short', 
+                    day: 'numeric', 
+                    year: 'numeric' 
+                }) : 'Unknown';
+                const time = w.dateObj ? w.dateObj.toLocaleTimeString('en-US', { 
+                    hour: 'numeric', 
+                    minute: '2-digit' 
+                }) : '';
+
+                const durationMin = Math.floor(w.duration);
+                const durationSec = Math.round((w.duration - durationMin) * 60);
+                const durationStr = `${durationMin}:${durationSec.toString().padStart(2, '0')}`;
+
+                const distance = useMetric ? w.distanceKm : w.distanceMi;
+                const distanceStr = distance ? distance.toFixed(2) : '--';
+                const distanceUnit = useMetric ? 'km' : 'mi';
+
+                // Calculate pace
+                let paceStr = '--:--';
+                if (distance > 0 && w.duration > 0) {
+                    const pace = w.duration / distance;
+                    const paceMin = Math.floor(pace);
+                    const paceSec = Math.round((pace - paceMin) * 60);
+                    paceStr = `${paceMin}:${paceSec.toString().padStart(2, '0')}`;
+                }
+
+                // Heart rate bar
+                let hrHtml = '<span style="color: var(--text-muted)">--</span>';
+                if (w.heartRateAvg) {
+                    const hrPercent = Math.min(((w.heartRateAvg - 60) / 140) * 100, 100);
+                    hrHtml = `
+                        <div class="hr-cell">
+                            <div class="hr-bar">
+                                <div class="hr-bar-fill" style="width: ${hrPercent}%"></div>
+                            </div>
+                            <div class="hr-values">
+                                <span class="avg">${Math.round(w.heartRateAvg)}</span>
+                                <span class="range">(${w.heartRateMin || '--'}-${w.heartRateMax || '--'})</span>
+                            </div>
+                        </div>
+                    `;
+                }
+
+                const cadence = w.cadenceAvg ? `${w.cadenceAvg} <span class="unit">spm</span>` : '--';
+                const stride = w.strideLengthAvg ? `${w.strideLengthAvg.toFixed(2)} <span class="unit">m</span>` : '--';
+
+                return `
+                    <tr>
+                        <td class="date-cell">
+                            <div class="date">${date}</div>
+                            <div class="time">${time}</div>
+                        </td>
+                        <td class="metric-cell">${durationStr} <span class="unit">min</span></td>
+                        <td class="metric-cell">${distanceStr} <span class="unit">${distanceUnit}</span></td>
+                        <td class="pace-cell">${paceStr} <span class="unit">/${distanceUnit}</span></td>
+                        <td class="metric-cell">${Math.round(w.calories || 0)} <span class="unit">cal</span></td>
+                        <td>${hrHtml}</td>
+                        <td class="metric-cell">${cadence}</td>
+                        <td class="metric-cell">${stride}</td>
+                        <td><span class="source-badge">${w.sourceName.replace(/'/g, '').substring(0, 20)}</span></td>
+                    </tr>
+                `;
+            }).join('');
+
+            updatePagination();
+        }
+
+        // Update pagination
+        function updatePagination() {
+            const totalPages = Math.ceil(filteredWorkouts.length / pageSize);
+            const start = (currentPage - 1) * pageSize + 1;
+            const end = Math.min(currentPage * pageSize, filteredWorkouts.length);
+
+            document.getElementById('showingStart').textContent = filteredWorkouts.length > 0 ? start : 0;
+            document.getElementById('showingEnd').textContent = end;
+            document.getElementById('totalFiltered').textContent = filteredWorkouts.length;
+
+            document.getElementById('prevPage').disabled = currentPage <= 1;
+            document.getElementById('nextPage').disabled = currentPage >= totalPages;
+
+            // Generate page numbers
+            const pageNumbers = document.getElementById('pageNumbers');
+            let pages = [];
+            
+            if (totalPages <= 7) {
+                pages = Array.from({ length: totalPages }, (_, i) => i + 1);
+            } else {
+                if (currentPage <= 3) {
+                    pages = [1, 2, 3, 4, '...', totalPages];
+                } else if (currentPage >= totalPages - 2) {
+                    pages = [1, '...', totalPages - 3, totalPages - 2, totalPages - 1, totalPages];
+                } else {
+                    pages = [1, '...', currentPage - 1, currentPage, currentPage + 1, '...', totalPages];
+                }
+            }
+
+            pageNumbers.innerHTML = pages.map(p => {
+                if (p === '...') {
+                    return '<span style="padding: 0.5rem; color: var(--text-muted)">...</span>';
+                }
+                return `<button class="${p === currentPage ? 'active' : ''}" data-page="${p}">${p}</button>`;
+            }).join('');
+        }
+
+        // Filter and sort
+        function applyFiltersAndSort() {
+            let data = [...workouts];
+
+            // Search filter (searches displayed date like "January", "Monday", source name)
+            const searchTerm = searchInput.value.toLowerCase();
+            if (searchTerm) {
+                data = data.filter(w => 
+                    (w.displayDate && w.displayDate.toLowerCase().includes(searchTerm)) ||
+                    (w.sourceName && w.sourceName.toLowerCase().includes(searchTerm))
+                );
+            }
+
+            // Year filter
+            const year = yearFilter.value;
+            if (year) {
+                data = data.filter(w => w.year === parseInt(year));
+            }
+
+            // Sort
+            const [sortKey, sortDir] = sortBy.value.split('-');
+            data.sort((a, b) => {
+                let valA, valB;
+                switch (sortKey) {
+                    case 'date':
+                        valA = a.dateObj || new Date(0);
+                        valB = b.dateObj || new Date(0);
+                        break;
+                    case 'distance':
+                        valA = a.distanceKm || 0;
+                        valB = b.distanceKm || 0;
+                        break;
+                    case 'duration':
+                        valA = a.duration || 0;
+                        valB = b.duration || 0;
+                        break;
+                    case 'pace':
+                        // Pace = min/km, lower is faster. Handle zero distance.
+                        valA = a.distanceKm > 0 ? a.duration / a.distanceKm : Infinity;
+                        valB = b.distanceKm > 0 ? b.duration / b.distanceKm : Infinity;
+                        break;
+                    case 'calories':
+                        valA = a.calories || 0;
+                        valB = b.calories || 0;
+                        break;
+                    default:
+                        valA = a.dateObj || new Date(0);
+                        valB = b.dateObj || new Date(0);
+                }
+                return sortDir === 'desc' ? valB - valA : valA - valB;
+            });
+
+            filteredWorkouts = data;
+            currentPage = 1;
+            updateStats();
+            renderTable();
+        }
+
+        // Event listeners
+        searchInput.addEventListener('input', debounce(applyFiltersAndSort, 300));
+        yearFilter.addEventListener('change', applyFiltersAndSort);
+        sortBy.addEventListener('change', applyFiltersAndSort);
+
+        // Column header click sorting
+        document.querySelector('thead').addEventListener('click', (e) => {
+            const th = e.target.closest('th[data-sort]');
+            if (!th) return;
+            
+            const sortKey = th.dataset.sort;
+            const currentSort = sortBy.value.split('-');
+            
+            // Toggle direction if same column, otherwise default to desc
+            let newDir = 'desc';
+            if (currentSort[0] === sortKey && currentSort[1] === 'desc') {
+                newDir = 'asc';
+            }
+            
+            sortBy.value = `${sortKey}-${newDir}`;
+            applyFiltersAndSort();
+            
+            // Update header styles
+            document.querySelectorAll('th').forEach(h => h.classList.remove('sorted'));
+            th.classList.add('sorted');
+            th.querySelector('.sort-arrow').textContent = newDir === 'desc' ? '↓' : '↑';
+        });
+
+        unitKm.addEventListener('click', () => {
+            useMetric = true;
+            unitKm.classList.add('active');
+            unitMi.classList.remove('active');
+            updateStats();
+            renderTable();
+        });
+
+        unitMi.addEventListener('click', () => {
+            useMetric = false;
+            unitMi.classList.add('active');
+            unitKm.classList.remove('active');
+            updateStats();
+            renderTable();
+        });
+
+        document.getElementById('prevPage').addEventListener('click', () => {
+            if (currentPage > 1) {
+                currentPage--;
+                renderTable();
+            }
+        });
+
+        document.getElementById('nextPage').addEventListener('click', () => {
+            const totalPages = Math.ceil(filteredWorkouts.length / pageSize);
+            if (currentPage < totalPages) {
+                currentPage++;
+                renderTable();
+            }
+        });
+
+        document.getElementById('pageNumbers').addEventListener('click', (e) => {
+            if (e.target.tagName === 'BUTTON') {
+                currentPage = parseInt(e.target.dataset.page);
+                renderTable();
+            }
+        });
+
+        // Export to CSV
+        exportBtn.addEventListener('click', () => {
+            const headers = ['Date', 'Time', 'Duration (min)', 'Distance (km)', 'Distance (mi)', 
+                           'Pace (min/km)', 'Calories', 'Avg HR', 'Min HR', 'Max HR', 
+                           'Cadence (spm)', 'Stride Length (m)', 'Source'];
+            
+            const rows = filteredWorkouts.map(w => {
+                const date = w.dateObj ? w.dateObj.toLocaleDateString() : '';
+                const time = w.dateObj ? w.dateObj.toLocaleTimeString() : '';
+                const pace = w.distanceKm > 0 ? (w.duration / w.distanceKm).toFixed(2) : '';
+                
+                return [
+                    date, time, w.duration.toFixed(2), w.distanceKm.toFixed(2), w.distanceMi.toFixed(2),
+                    pace, Math.round(w.calories), w.heartRateAvg || '', w.heartRateMin || '', 
+                    w.heartRateMax || '', w.cadenceAvg || '', w.strideLengthAvg || '', w.sourceName
+                ].join(',');
+            });
+
+            const csv = [headers.join(','), ...rows].join('\n');
+            const blob = new Blob([csv], { type: 'text/csv' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'running-workouts.csv';
+            a.click();
+            URL.revokeObjectURL(url);
+        });
+
+        // Utility: Debounce
+        function debounce(fn, delay) {
+            let timeout;
+            return function(...args) {
+                clearTimeout(timeout);
+                timeout = setTimeout(() => fn.apply(this, args), delay);
+            };
+        }
+    </script>
+</body>
+</html>
+
