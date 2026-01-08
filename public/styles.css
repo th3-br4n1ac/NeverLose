@@ -395,10 +395,13 @@ body {
     border-radius: 12px;
     margin-bottom: 12px;
     transition: all 0.2s;
+    cursor: pointer;
 }
 
 .activity-item:hover {
     background: var(--bg-hover);
+    transform: translateX(4px);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
 }
 
 .activity-date {
@@ -681,6 +684,14 @@ select:focus {
     padding: 4px 8px;
     border-radius: 6px;
     margin-bottom: 4px;
+    transition: all 0.2s ease;
+    cursor: pointer;
+}
+
+.calendar-day .day-workout:hover {
+    transform: scale(1.05);
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+    opacity: 0.9;
 }
 
 .calendar-day .day-workout.completed {
@@ -688,20 +699,40 @@ select:focus {
     color: var(--success);
 }
 
+.calendar-day .day-workout.completed:hover {
+    background: rgba(34, 197, 94, 0.3);
+}
+
 .calendar-day .day-workout.planned {
     background: rgba(59, 130, 246, 0.2);
     color: var(--info);
+    cursor: default;
+}
+
+.calendar-day .day-workout.planned:hover {
+    transform: none;
+    box-shadow: none;
 }
 
 .calendar-day .day-workout.missed {
     background: rgba(239, 68, 68, 0.2);
     color: var(--danger);
     text-decoration: line-through;
+    cursor: default;
+}
+
+.calendar-day .day-workout.missed:hover {
+    transform: none;
+    box-shadow: none;
 }
 
 .calendar-day .day-workout.exceeded {
     background: rgba(245, 158, 11, 0.2);
     color: var(--warning);
+}
+
+.calendar-day .day-workout.exceeded:hover {
+    background: rgba(245, 158, 11, 0.3);
 }
 
 /* ===== Modals ===== */

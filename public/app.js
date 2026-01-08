@@ -1772,7 +1772,9 @@ class App {
     updateUI() {
         this.updateDashboardStats();
         this.updateRecentActivity();
-        charts.createWeeklyMileageChart('weeklyMileageChart', this.workouts, this.useMetric);
+        // Use deduplicated workouts for charts to avoid counting duplicates
+        const deduplicatedWorkouts = this.deduplicateWorkoutsList([...this.workouts]);
+        charts.createWeeklyMileageChart('weeklyMileageChart', deduplicatedWorkouts, this.useMetric);
         this.renderWorkoutsTable();
     }
 
@@ -1786,12 +1788,15 @@ class App {
         document.getElementById('monthDistanceUnit').textContent = unit;
         document.getElementById('avgPaceUnit').textContent = `/${unit}`;
 
+        // Use deduplicated workouts for dashboard stats to avoid counting duplicates
+        const deduplicatedWorkouts = this.deduplicateWorkoutsList([...this.workouts]);
+
         // This week
         const weekStart = new Date(now);
         weekStart.setDate(weekStart.getDate() - weekStart.getDay());
         weekStart.setHours(0, 0, 0, 0);
 
-        const thisWeekWorkouts = this.workouts.filter(w => {
+        const thisWeekWorkouts = deduplicatedWorkouts.filter(w => {
             const d = w.dateObj || new Date(w.date);
             return d >= weekStart;
         });
@@ -1805,7 +1810,7 @@ class App {
         lastWeekStart.setDate(lastWeekStart.getDate() - 7);
         const lastWeekEnd = new Date(weekStart);
 
-        const lastWeekWorkouts = this.workouts.filter(w => {
+        const lastWeekWorkouts = deduplicatedWorkouts.filter(w => {
             const d = w.dateObj || new Date(w.date);
             return d >= lastWeekStart && d < lastWeekEnd;
         });
@@ -1815,7 +1820,7 @@ class App {
 
         // This month
         const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-        const thisMonthWorkouts = this.workouts.filter(w => {
+        const thisMonthWorkouts = deduplicatedWorkouts.filter(w => {
             const d = w.dateObj || new Date(w.date);
             return d >= monthStart;
         });
@@ -1828,7 +1833,7 @@ class App {
         const lastMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
         const lastMonthEnd = new Date(now.getFullYear(), now.getMonth(), 1);
 
-        const lastMonthWorkouts = this.workouts.filter(w => {
+        const lastMonthWorkouts = deduplicatedWorkouts.filter(w => {
             const d = w.dateObj || new Date(w.date);
             return d >= lastMonthStart && d < lastMonthEnd;
         });
@@ -1836,11 +1841,11 @@ class App {
         const lastMonthDistanceKm = lastMonthWorkouts.reduce((sum, w) => sum + (w.distanceKm || 0), 0);
         this.updateCompare('monthCompare', monthDistanceKm, lastMonthDistanceKm);
 
-        // Total runs
-        document.getElementById('totalRuns').textContent = this.workouts.length;
+        // Total runs - use deduplicated count
+        document.getElementById('totalRuns').textContent = deduplicatedWorkouts.length;
 
         // Average pace - calculate from distance/duration if missing
-        const validPaceWorkouts = this.workouts.filter(w => {
+        const validPaceWorkouts = deduplicatedWorkouts.filter(w => {
             let pace = w.pace || w.paceMinPerKm;
             if (!pace && w.distanceKm && w.duration && w.distanceKm > 0 && w.duration > 0) {
                 pace = w.duration / w.distanceKm;
@@ -1880,7 +1885,9 @@ class App {
     // Update recent activity list
     updateRecentActivity() {
         const container = document.getElementById('recentActivity');
-        const recent = [...this.workouts]
+        // Use deduplicated workouts to avoid showing duplicates
+        const deduplicatedWorkouts = this.deduplicateWorkoutsList([...this.workouts]);
+        const recent = deduplicatedWorkouts
             .sort((a, b) => new Date(b.date) - new Date(a.date))
             .slice(0, 5);
 
@@ -1893,7 +1900,7 @@ class App {
             return;
         }
 
-        container.innerHTML = recent.map(w => {
+        container.innerHTML = recent.map((w, index) => {
             const d = w.dateObj || new Date(w.date);
             // Convert distance based on unit preference
             const distanceKm = w.distanceKm || 0;
@@ -1910,7 +1917,7 @@ class App {
                 : '--:--';
 
             return `
-                <div class="activity-item">
+                <div class="activity-item" data-workout-id="${w.id}" style="cursor: pointer;">
                     <div class="activity-date">
                         <div class="day">${d.getDate()}</div>
                         <div class="month">${d.toLocaleString('en-US', { month: 'short' })}</div>
@@ -1930,6 +1937,17 @@ class App {
                 </div>
             `;
         }).join('');
+
+        // Add click handlers to activity items
+        container.querySelectorAll('.activity-item').forEach((item, index) => {
+            item.addEventListener('click', () => {
+                const workout = recent[index];
+                if (workout) {
+                    const workoutDate = workout.dateObj || new Date(workout.date);
+                    this.showWorkoutDetail(workout, workoutDate);
+                }
+            });
+        });
     }
 
     // Enrich workout with calculated metrics and matching data

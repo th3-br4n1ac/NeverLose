@@ -149,15 +149,26 @@ class CalendarManager {
             }
             
             workoutDiv.className = `day-workout ${status}`;
+            workoutDiv.style.cursor = 'pointer';
             const dist = this.useMetric ? (w.distanceKm || 0) : (w.distanceMi || 0);
             const unit = this.useMetric ? 'km' : 'mi';
             workoutDiv.textContent = `${dist.toFixed(1)}${unit}`;
+            
+            // Add click handler to individual workout
+            workoutDiv.addEventListener('click', (e) => {
+                e.stopPropagation(); // Prevent triggering day click
+                this.onDayClick(date, [w], plannedWorkout); // Pass single workout
+            });
+            
             cell.appendChild(workoutDiv);
         });
 
-        // Click handler to view/edit day
-        cell.addEventListener('click', () => {
-            this.onDayClick(date, dayWorkouts, plannedWorkout);
+        // Click handler to view/edit day (only if clicking on cell, not on workout)
+        cell.addEventListener('click', (e) => {
+            // Only trigger if clicking directly on the cell or day number, not on workout divs
+            if (e.target === cell || e.target.classList.contains('day-number')) {
+                this.onDayClick(date, dayWorkouts, plannedWorkout);
+            }
         });
 
         grid.appendChild(cell);
