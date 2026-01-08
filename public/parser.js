@@ -27,10 +27,20 @@ class AppleHealthParser {
         this.strideLengthRecordsSeen = new Set();
         this.onProgress = onProgress;
 
+        // Check if Streams API is available (not supported on some mobile browsers)
+        if (typeof file.stream === 'function') {
+            return this.parseFileStream(file);
+        } else {
+            return this.parseFileReader(file);
+        }
+    }
+
+    // Parse using Streams API (modern browsers)
+    async parseFileStream(file) {
         const fileSize = file.size;
         let bytesRead = 0;
         let buffer = '';
-        let recordBuffer = ''; // Buffer for HR, cadence, stride records
+        let recordBuffer = '';
 
         const reader = file.stream().getReader();
         const decoder = new TextDecoder();
@@ -54,15 +64,12 @@ class AppleHealthParser {
                 buffer += chunk;
                 recordBuffer += chunk;
 
-                // Extract complete workout elements from buffer
                 const workoutResult = this.extractWorkouts(buffer);
                 buffer = workoutResult.remaining;
 
-                // Extract HR, cadence, stride records - find last complete record and keep remainder
                 const recordResult = this.extractRecordsStreaming(recordBuffer);
                 recordBuffer = recordResult.remaining;
 
-                // Update progress
                 if (this.onProgress) {
                     this.onProgress({
                         percent: Math.round((bytesRead / fileSize) * 100),
@@ -72,25 +79,82 @@ class AppleHealthParser {
                     });
                 }
 
-                // Allow UI updates
                 await new Promise(r => setTimeout(r, 0));
             }
 
-            // Associate records with workouts
-            console.log(`Parsed ${this.heartRateRecords.length} HR, ${this.cadenceRecords.length} cadence, ${this.strideLengthRecords.length} stride records`);
-            this.associateRecordsWithWorkouts();
-
-            // Log summary
-            const workoutsWithHR = this.workouts.filter(w => w.heartRateData && w.heartRateData.length > 0);
-            const workoutsWithCadence = this.workouts.filter(w => w.cadenceData && w.cadenceData.length > 0);
-            const workoutsWithStride = this.workouts.filter(w => w.strideLengthData && w.strideLengthData.length > 0);
-            console.log(`Workouts with detailed data: ${workoutsWithHR.length} HR, ${workoutsWithCadence.length} cadence, ${workoutsWithStride.length} stride`);
-
-            return this.workouts;
+            return this.finalizeWorkouts();
         } catch (error) {
-            console.error('Error parsing file:', error);
+            console.error('Error parsing file with stream:', error);
             throw error;
         }
+    }
+
+    // Parse using FileReader API (fallback for mobile browsers)
+    async parseFileReader(file) {
+        const fileSize = file.size;
+        const chunkSize = 1024 * 1024; // 1MB chunks
+        let offset = 0;
+        let buffer = '';
+        let recordBuffer = '';
+
+        while (offset < fileSize) {
+            const chunk = await this.readChunk(file, offset, chunkSize);
+            offset += chunkSize;
+
+            buffer += chunk;
+            recordBuffer += chunk;
+
+            const workoutResult = this.extractWorkouts(buffer);
+            buffer = workoutResult.remaining;
+
+            const recordResult = this.extractRecordsStreaming(recordBuffer);
+            recordBuffer = recordResult.remaining;
+
+            if (this.onProgress) {
+                this.onProgress({
+                    percent: Math.round((Math.min(offset, fileSize) / fileSize) * 100),
+                    bytesRead: Math.min(offset, fileSize),
+                    fileSize,
+                    workoutsFound: this.workouts.length
+                });
+            }
+
+            await new Promise(r => setTimeout(r, 0));
+        }
+
+        // Process remaining buffers
+        if (buffer.length > 0) {
+            this.extractWorkouts(buffer);
+        }
+        if (recordBuffer.length > 0) {
+            this.extractRecordsStreaming(recordBuffer);
+        }
+
+        return this.finalizeWorkouts();
+    }
+
+    // Read a chunk of the file using FileReader
+    readChunk(file, offset, length) {
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            const blob = file.slice(offset, offset + length);
+            reader.onload = () => resolve(reader.result);
+            reader.onerror = () => reject(reader.error);
+            reader.readAsText(blob);
+        });
+    }
+
+    // Finalize workouts after parsing
+    finalizeWorkouts() {
+        console.log(`Parsed ${this.heartRateRecords.length} HR, ${this.cadenceRecords.length} cadence, ${this.strideLengthRecords.length} stride records`);
+        this.associateRecordsWithWorkouts();
+
+        const workoutsWithHR = this.workouts.filter(w => w.heartRateData && w.heartRateData.length > 0);
+        const workoutsWithCadence = this.workouts.filter(w => w.cadenceData && w.cadenceData.length > 0);
+        const workoutsWithStride = this.workouts.filter(w => w.strideLengthData && w.strideLengthData.length > 0);
+        console.log(`Workouts with detailed data: ${workoutsWithHR.length} HR, ${workoutsWithCadence.length} cadence, ${workoutsWithStride.length} stride`);
+
+        return this.workouts;
     }
 
     // Extract all record types from buffer (streaming version)
