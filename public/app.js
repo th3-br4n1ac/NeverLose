@@ -120,11 +120,13 @@ class App {
                     }
                     
                     // Fill missing stride data from Strava (though usually Apple has this)
+                    // But preserve Apple's stride data if it exists
                     if (!merged.strideLength && stravaW.strideLength) merged.strideLength = stravaW.strideLength;
-                    if (!merged.strideLengthAvg && stravaW.strideLengthAvg) merged.strideLengthAvg = stravaW.strideLengthAvg;
                     if ((!merged.strideLengthData || merged.strideLengthData.length === 0) && stravaW.strideLengthData && stravaW.strideLengthData.length > 0) {
                         merged.strideLengthData = stravaW.strideLengthData;
                     }
+                    // Only use Strava's strideLengthAvg if Apple doesn't have one
+                    if (!merged.strideLengthAvg && stravaW.strideLengthAvg) merged.strideLengthAvg = stravaW.strideLengthAvg;
                     
                     // Calculate HR stats from HR data if we have data but missing stats
                     if (merged.heartRateData && merged.heartRateData.length > 0) {
@@ -137,6 +139,13 @@ class App {
                             if (merged.heartRateMin == null) merged.heartRateMin = Math.min(...hrValues);
                             if (merged.heartRateMax == null) merged.heartRateMax = Math.max(...hrValues);
                         }
+                    }
+                    
+                    // Calculate stride stats from stride data if we have data but missing average
+                    if (merged.strideLengthData && merged.strideLengthData.length > 0 && !merged.strideLengthAvg) {
+                        const strideValues = merged.strideLengthData.map(s => typeof s === 'object' ? s.value : s);
+                        merged.strideLengthAvg = strideValues.reduce((sum, val) => sum + val, 0) / strideValues.length;
+                        console.log(`[Dedup] Calculated stride avg ${merged.strideLengthAvg.toFixed(3)} from ${strideValues.length} stride data points for Apple workout ${appleW.id}`);
                     }
                     
                     // Mark as merged so we know it has data from both sources
@@ -175,6 +184,9 @@ class App {
                 heartRateMax: w.heartRateMax,
                 heartRateMin: w.heartRateMin,
                 heartRateDataLength: w.heartRateData?.length || 0,
+                strideLengthAvg: w.strideLengthAvg,
+                strideLength: w.strideLength,
+                strideLengthDataLength: w.strideLengthData?.length || 0,
                 mergedFromStrava: w.mergedFromStrava
             });
         });
@@ -197,6 +209,9 @@ class App {
                 heartRateMax: w.heartRateMax,
                 heartRateMin: w.heartRateMin,
                 heartRateDataLength: w.heartRateData?.length || 0,
+                strideLengthAvg: w.strideLengthAvg,
+                strideLength: w.strideLength,
+                strideLengthDataLength: w.strideLengthData?.length || 0,
                 mergedFromStrava: w.mergedFromStrava
             });
         });
@@ -213,6 +228,9 @@ class App {
                 heartRateMax: w.heartRateMax,
                 heartRateMin: w.heartRateMin,
                 heartRateDataLength: w.heartRateData?.length || 0,
+                strideLengthAvg: w.strideLengthAvg,
+                strideLength: w.strideLength,
+                strideLengthDataLength: w.strideLengthData?.length || 0,
                 mergedFromStrava: w.mergedFromStrava
             });
         });
@@ -1497,7 +1515,17 @@ class App {
         await new Promise(r => setTimeout(r, 100));
 
         try {
-            const workouts = await appleParser.parseFile(file, (progress) => {
+            // Ensure parser is available - use window.appleParser to avoid ReferenceError
+            if (!window.appleParser) {
+                console.error('Parser check:', {
+                    windowAppleParser: window.appleParser,
+                    typeofWindow: typeof window,
+                    scriptsLoaded: document.querySelectorAll('script[src*="parser"]').length
+                });
+                throw new Error('Apple Health Parser not loaded. Please refresh the page and ensure parser.js is loaded before app.js.');
+            }
+            
+            const workouts = await window.appleParser.parseFile(file, (progress) => {
                 progressBar.style.width = `${progress.percent}%`;
                 progressText.textContent = `Processing... ${progress.workoutsFound} workouts found (${progress.percent}%)`;
             });
@@ -1995,6 +2023,9 @@ class App {
         if (enriched.strideLengthData && enriched.strideLengthData.length > 0 && !enriched.strideLengthAvg) {
             const strideValues = enriched.strideLengthData.map(s => typeof s === 'object' ? s.value : s);
             enriched.strideLengthAvg = strideValues.reduce((sum, val) => sum + val, 0) / strideValues.length;
+            if (enriched.id && enriched.id.includes('2025-05')) {
+                console.log(`[Enrich] Calculated stride avg ${enriched.strideLengthAvg.toFixed(3)} from ${strideValues.length} stride data points for workout ${enriched.id}`);
+            }
         }
         
         // Calculate cadence stats from detailed cadence data if average is missing
@@ -2605,8 +2636,15 @@ class App {
             `${Math.round(mergedWorkout.elevation)} m` : '--';
         document.getElementById('detailCadence').textContent = (mergedWorkout.cadenceAvg || mergedWorkout.cadence) ?
             `${Math.round(mergedWorkout.cadenceAvg || mergedWorkout.cadence)} spm` : '--';
-        document.getElementById('detailStride').textContent = (mergedWorkout.strideLengthAvg || mergedWorkout.strideLength) ?
-            `${(mergedWorkout.strideLengthAvg || mergedWorkout.strideLength).toFixed(2)} m` : '--';
+        // Calculate strideLengthAvg from detailed data if missing
+        let strideDisplay = mergedWorkout.strideLengthAvg || mergedWorkout.strideLength;
+        if (!strideDisplay && mergedWorkout.strideLengthData && mergedWorkout.strideLengthData.length > 0) {
+            const strideValues = mergedWorkout.strideLengthData.map(s => typeof s === 'object' ? s.value : s);
+            strideDisplay = strideValues.reduce((sum, val) => sum + val, 0) / strideValues.length;
+            console.log(`[Detail] Calculated stride avg ${strideDisplay.toFixed(3)} from ${strideValues.length} stride data points for workout ${mergedWorkout.id}`);
+        }
+        document.getElementById('detailStride').textContent = strideDisplay ?
+            `${strideDisplay.toFixed(2)} m` : '--';
 
         // Create HR zones chart
         this.createHRZonesChart(mergedWorkout);

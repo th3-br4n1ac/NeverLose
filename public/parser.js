@@ -211,24 +211,41 @@ class AppleHealthParser {
         }
 
         // Extract stride length records
-        // Match: <Record type="HKQuantityTypeIdentifierRunningStrideLength" ... startDate="..." ... value="X.XX">
-        const stridePattern = /<Record[^>]*type="HKQuantityTypeIdentifierRunningStrideLength"[^>]*startDate="([^"]+)"[^>]*value="([0-9.]+)"[^>]*>/g;
+        // Apple Health may use different identifiers:
+        // - HKQuantityTypeIdentifierRunningStrideLength (for running)
+        // - HKQuantityTypeIdentifierStrideLength (generic)
+        // Pattern must be flexible for attribute order variations
+        const stridePatterns = [
+            '<Record[^>]*type="HKQuantityTypeIdentifierRunningStrideLength"[^>]*>',
+            '<Record[^>]*type="HKQuantityTypeIdentifierStrideLength"[^>]*>'
+        ];
 
-        while ((match = stridePattern.exec(buffer)) !== null) {
-            lastMatchEnd = Math.max(lastMatchEnd, match.index + match[0].length);
-            const startDate = match[1];
-            const value = parseFloat(match[2]);
+        for (const patternStr of stridePatterns) {
+            // Create new regex for each pattern to avoid state issues
+            const pattern = new RegExp(patternStr, 'g');
+            let match;
+            while ((match = pattern.exec(buffer)) !== null) {
+                lastMatchEnd = Math.max(lastMatchEnd, match.index + match[0].length);
+                
+                // Extract attributes from the matched Record tag
+                const recordXml = match[0];
+                const startDate = this.extractAttribute(recordXml, 'startDate') || this.extractAttribute(recordXml, 'startdate');
+                const value = this.extractAttribute(recordXml, 'value');
+                
+                if (startDate && value) {
+                    const parsedValue = parseFloat(value);
+                    if (!isNaN(parsedValue) && parsedValue > 0) {
+                        const key = `stride_${startDate}_${parsedValue}`;
+                        if (this.strideLengthRecordsSeen.has(key)) continue;
+                        this.strideLengthRecordsSeen.add(key);
 
-            if (startDate && value) {
-                const key = `stride_${startDate}_${value}`;
-                if (this.strideLengthRecordsSeen.has(key)) continue;
-                this.strideLengthRecordsSeen.add(key);
+                        const isoDate = startDate.replace(' ', 'T').replace(' ', '').replace(' ', 'T');
+                        const timestamp = new Date(isoDate).getTime();
 
-                const isoDate = startDate.replace(' ', 'T').replace(' ', '');
-                const timestamp = new Date(isoDate).getTime();
-
-                if (!isNaN(timestamp)) {
-                    this.strideLengthRecords.push({ time: timestamp, value: value });
+                        if (!isNaN(timestamp)) {
+                            this.strideLengthRecords.push({ time: timestamp, value: parsedValue });
+                        }
+                    }
                 }
             }
         }
@@ -312,15 +329,25 @@ class AppleHealthParser {
             }
 
             // Find all stride length records within this workout's time range
+            // Use a slightly wider time window (30 seconds before/after) to catch edge cases
+            const strideWindowStart = workoutStart - 30 * 1000;
+            const strideWindowEnd = workoutEnd + 30 * 1000;
+            
             if (this.strideLengthRecords.length > 0) {
                 const workoutStride = this.strideLengthRecords.filter(s =>
-                    s.time >= workoutStart && s.time <= workoutEnd
+                    s.time >= strideWindowStart && s.time <= strideWindowEnd
                 );
                 if (workoutStride.length > 0) {
                     workout.strideLengthData = workoutStride;
                     // Calculate average stride length from detailed data
                     const avgStride = workoutStride.reduce((sum, s) => sum + s.value, 0) / workoutStride.length;
                     workout.strideLengthAvg = avgStride;
+                    
+                    // Debug logging for specific date
+                    const workoutDateStr = workout.dateObj ? workout.dateObj.toISOString().substring(0, 10) : '';
+                    if (workoutDateStr && workoutDateStr.includes('2025-05')) {
+                        console.log(`[Parser] Associated ${workoutStride.length} stride records with workout ${workout.id} (${workoutDateStr}), avg: ${avgStride.toFixed(3)}m`);
+                    }
                 }
             }
         }
@@ -433,7 +460,13 @@ class AppleHealthParser {
                         workout.heartRateMax = parseFloat(this.extractAttribute(statXml, 'maximum')) || null;
                         break;
                     case 'HKQuantityTypeIdentifierRunningStrideLength':
+                    case 'HKQuantityTypeIdentifierStrideLength':
                         workout.strideLengthAvg = parseFloat(this.extractAttribute(statXml, 'average')) || null;
+                        // Also try 'sum' or 'value' if average is not available
+                        if (!workout.strideLengthAvg) {
+                            workout.strideLengthAvg = parseFloat(this.extractAttribute(statXml, 'sum')) || 
+                                                      parseFloat(this.extractAttribute(statXml, 'value')) || null;
+                        }
                         break;
                     case 'HKQuantityTypeIdentifierRunningSpeed':
                         workout.speedAvg = parseFloat(this.extractAttribute(statXml, 'average')) || null;
@@ -518,3 +551,5 @@ class AppleHealthParser {
 
 // Create global parser instance
 const appleParser = new AppleHealthParser();
+// Make it globally accessible
+window.appleParser = appleParser;
