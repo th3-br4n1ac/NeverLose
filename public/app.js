@@ -200,9 +200,33 @@ class App {
     }
 
     setupEventListeners() {
+        // Mobile menu toggle
+        const hamburger = document.getElementById('hamburgerBtn');
+        const sidebar = document.getElementById('sidebar');
+        const overlay = document.getElementById('sidebarOverlay');
+
+        if (hamburger) {
+            hamburger.addEventListener('click', () => {
+                sidebar.classList.toggle('open');
+                overlay.classList.toggle('active');
+            });
+        }
+
+        if (overlay) {
+            overlay.addEventListener('click', () => {
+                sidebar.classList.remove('open');
+                overlay.classList.remove('active');
+            });
+        }
+
         // Navigation
         document.querySelectorAll('.nav-item').forEach(item => {
-            item.addEventListener('click', () => this.navigateTo(item.dataset.page));
+            item.addEventListener('click', () => {
+                this.navigateTo(item.dataset.page);
+                // Close mobile menu after navigation
+                if (sidebar) sidebar.classList.remove('open');
+                if (overlay) overlay.classList.remove('active');
+            });
         });
 
         // Upload button

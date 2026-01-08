@@ -1071,26 +1071,115 @@ select:focus {
 }
 
 @media (max-width: 768px) {
+    /* Mobile sidebar - hidden by default */
     .sidebar {
+        position: fixed;
+        top: 0;
+        left: 0;
+        height: 100vh;
+        z-index: 1000;
         transform: translateX(-100%);
-        transition: transform 0.3s;
+        transition: transform 0.3s ease;
     }
 
     .sidebar.open {
         transform: translateX(0);
     }
 
+    /* Overlay when sidebar is open */
+    .sidebar-overlay {
+        display: none;
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: rgba(0, 0, 0, 0.6);
+        z-index: 999;
+    }
+
+    .sidebar-overlay.active {
+        display: block;
+    }
+
+    /* Mobile hamburger menu */
+    .mobile-header {
+        display: flex !important;
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        height: 60px;
+        background: var(--bg-secondary);
+        border-bottom: 1px solid var(--border-color);
+        align-items: center;
+        justify-content: space-between;
+        padding: 0 16px;
+        z-index: 998;
+    }
+
+    .hamburger {
+        display: flex;
+        flex-direction: column;
+        gap: 5px;
+        cursor: pointer;
+        padding: 8px;
+    }
+
+    .hamburger span {
+        width: 24px;
+        height: 2px;
+        background: var(--text-primary);
+        transition: all 0.3s;
+    }
+
+    .mobile-logo {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-weight: 600;
+        font-size: 1.1rem;
+    }
+
+    .mobile-logo-icon {
+        font-size: 1.5rem;
+    }
+
     .main-content {
         margin-left: 0;
         padding: 16px;
+        padding-top: 76px; /* Account for mobile header */
     }
 
     .page-header {
         flex-direction: column;
-        align-items: flex-start;
+        align-items: stretch;
+        gap: 12px;
+    }
+
+    .page-header h1 {
+        font-size: 1.5rem;
     }
 
     .header-actions {
+        width: 100%;
+        flex-wrap: wrap;
+        gap: 8px;
+    }
+
+    .header-actions .btn {
+        flex: 1;
+        min-width: 120px;
+        font-size: 0.85rem;
+        padding: 10px 12px;
+    }
+
+    .sync-status-container {
+        width: 100%;
+        justify-content: center;
+    }
+
+    .search-box {
         width: 100%;
     }
 
@@ -1098,17 +1187,153 @@ select:focus {
         width: 100%;
     }
 
+    /* Stats grid - 2 columns on mobile */
     .stats-grid {
         grid-template-columns: repeat(2, 1fr);
+        gap: 12px;
     }
 
+    .stat-card {
+        padding: 16px;
+    }
+
+    .stat-value {
+        font-size: 1.5rem;
+    }
+
+    /* Calendar mobile */
     .calendar-grid {
-        font-size: 0.85rem;
+        font-size: 0.75rem;
     }
 
     .calendar-day {
-        min-height: 80px;
-        padding: 8px;
+        min-height: 60px;
+        padding: 4px;
+    }
+
+    .calendar-day-number {
+        font-size: 0.85rem;
+    }
+
+    .calendar-workout {
+        font-size: 0.65rem;
+        padding: 2px 4px;
+    }
+
+    .calendar-header {
+        flex-direction: column;
+        gap: 12px;
+        align-items: stretch;
+    }
+
+    .calendar-nav {
+        justify-content: center;
+    }
+
+    .calendar-actions {
+        justify-content: center;
+        flex-wrap: wrap;
+    }
+
+    .calendar-actions .btn {
+        font-size: 0.8rem;
+        padding: 8px 12px;
+    }
+
+    /* Workouts table mobile */
+    .workouts-table {
+        display: block;
+        overflow-x: auto;
+    }
+
+    .workouts-table th,
+    .workouts-table td {
+        padding: 10px 8px;
+        font-size: 0.85rem;
+    }
+
+    /* Activity items */
+    .activity-item {
+        padding: 12px;
+    }
+
+    .activity-stats {
+        gap: 12px;
+        flex-wrap: wrap;
+    }
+
+    /* Modal mobile */
+    .modal-content {
+        width: 95%;
+        max-width: 95%;
+        max-height: 90vh;
+        margin: 5vh auto;
+    }
+
+    .modal-large {
+        width: 95%;
+    }
+
+    /* Workout detail modal */
+    .workout-detail-summary {
+        grid-template-columns: repeat(2, 1fr);
+        gap: 12px;
+    }
+
+    .detail-stat {
+        padding: 12px;
+    }
+
+    .detail-value {
+        font-size: 1.2rem;
+    }
+
+    .additional-stats-grid {
+        grid-template-columns: repeat(2, 1fr);
+    }
+
+    /* Charts */
+    .chart-container-small {
+        height: 200px;
+        max-height: 200px;
+    }
+
+    /* Unit toggle */
+    .unit-toggle {
+        width: 100%;
+        justify-content: center;
+    }
+
+    /* Settings */
+    .setting-group {
+        padding: 16px;
+    }
+
+    .sources-list {
+        gap: 12px;
+    }
+}
+
+/* Extra small devices */
+@media (max-width: 480px) {
+    .stats-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .workout-detail-summary {
+        grid-template-columns: 1fr;
+    }
+
+    .additional-stats-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .header-actions .btn {
+        width: 100%;
+    }
+
+    .calendar-actions .btn {
+        flex: 1;
     }
 }
 
@@ -1840,16 +2065,116 @@ select:focus {
 }
 
 @media (max-width: 768px) {
+    .routes-container {
+        grid-template-columns: 1fr;
+        height: auto;
+        gap: 12px;
+    }
+
+    .routes-sidebar {
+        max-height: 250px;
+        order: 1;
+    }
+
+    .routes-main {
+        order: 2;
+        height: auto;
+        min-height: 400px;
+    }
+
+    .map-container {
+        height: 300px !important;
+        min-height: 300px;
+    }
+
     .route-stats {
         grid-template-columns: repeat(2, 1fr);
+        gap: 8px;
+    }
+
+    .route-stat {
+        padding: 12px;
+    }
+
+    .playback-controls {
+        padding: 12px;
     }
 
     .playback-info {
-        gap: 16px;
+        gap: 12px;
+        flex-wrap: wrap;
+        justify-content: center;
     }
 
     .playback-stat {
-        font-size: 0.95rem;
+        font-size: 0.85rem;
+        min-width: 80px;
+    }
+
+    .playback-buttons {
+        gap: 8px;
+    }
+
+    .playback-buttons .btn {
+        padding: 8px 16px;
+        font-size: 0.85rem;
+    }
+
+    /* Comparison panel mobile */
+    .comparison-panel {
+        padding: 16px;
+    }
+
+    .comparison-routes {
+        grid-template-columns: 1fr;
+        gap: 12px;
+    }
+
+    .comparison-actions {
+        flex-wrap: wrap;
+        gap: 8px;
+    }
+
+    .comparison-actions .btn {
+        flex: 1;
+        min-width: 100px;
+    }
+
+    /* Route info panel */
+    .route-info-panel {
+        padding: 16px;
+    }
+
+    .route-info-panel h3 {
+        font-size: 1.1rem;
+    }
+
+    /* Similar routes */
+    .similar-routes {
+        padding: 12px;
+    }
+
+    .similar-route-item {
+        padding: 10px;
+        font-size: 0.85rem;
+    }
+
+    /* Route filters */
+    .routes-filters {
+        flex-direction: column;
+        gap: 8px;
+    }
+
+    .routes-filters select {
+        width: 100%;
+    }
+
+    /* Race stats widget */
+    .race-stats-widget {
+        top: 10px;
+        right: 10px;
+        padding: 10px 14px;
+        font-size: 0.85rem;
     }
 }
 
