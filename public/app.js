@@ -38,16 +38,16 @@ class App {
         const stravaWorkouts = workouts.filter(w => w.source === 'strava');
         const otherWorkouts = workouts.filter(w => w.source !== 'apple' && w.source !== 'strava');
 
-        // Find Strava workouts that are duplicates of Apple workouts
+        // Find Strava workouts that are duplicates of Apple workouts and merge their data
         const stravaDuplicateIds = new Set();
-
-        for (const stravaW of stravaWorkouts) {
-            const stravaTime = (stravaW.dateObj || new Date(stravaW.date)).getTime();
-            const stravaDist = stravaW.distanceKm || 0;
-
-            for (const appleW of appleWorkouts) {
-                const appleTime = (appleW.dateObj || new Date(appleW.date)).getTime();
-                const appleDist = appleW.distanceKm || 0;
+        const mergedAppleWorkouts = appleWorkouts.map(appleW => {
+            const appleTime = (appleW.dateObj || new Date(appleW.date)).getTime();
+            const appleDist = appleW.distanceKm || 0;
+            
+            // Find matching Strava workout
+            for (const stravaW of stravaWorkouts) {
+                const stravaTime = (stravaW.dateObj || new Date(stravaW.date)).getTime();
+                const stravaDist = stravaW.distanceKm || 0;
 
                 // Check time similarity (within 10 minutes)
                 const timeDiff = Math.abs(stravaTime - appleTime);
@@ -58,25 +58,166 @@ class App {
                 const distThreshold = Math.max(0.5, Math.max(stravaDist, appleDist) * 0.1);
                 const distMatch = distDiff < distThreshold;
 
-                // If both match, it's a duplicate - calculate similarity score
+                // If both time and distance match, it's a duplicate - merge Strava data into Apple workout
+                // Don't require additional similarity threshold if they pass basic checks
                 if (timeMatch && distMatch) {
                     const timeSimilarity = 1 - (timeDiff / (10 * 60 * 1000));
                     const distSimilarity = 1 - (distDiff / distThreshold);
                     const similarity = (timeSimilarity + distSimilarity) / 2;
 
-                    // 95% similarity threshold
-                    if (similarity >= 0.5) { // Already passed tight filters, so lower threshold is fine
-                        stravaDuplicateIds.add(stravaW.id);
-                        break;
+                    console.log(`[Dedup] Found duplicate: Apple ${appleW.id} (${appleW.date}) matches Strava ${stravaW.id} (${stravaW.date}), similarity: ${(similarity * 100).toFixed(1)}%`);
+                    stravaDuplicateIds.add(stravaW.id);
+                    
+                    // Merge Strava data into Apple workout (fill missing fields)
+                    const merged = { ...appleW };
+                    
+                    // Fill missing HR data from Strava (check for null/undefined, not just falsy)
+                    // Use == null to catch both null and undefined
+                    // Always prefer Strava HR values if available, as they're usually more accurate
+                    if (stravaW.heartRateAvg != null && ((merged.heartRateAvg == null) || stravaW.heartRateData && stravaW.heartRateData.length > 0)) {
+                        merged.heartRateAvg = stravaW.heartRateAvg;
+                        console.log(`[Dedup] Merged HR avg ${stravaW.heartRateAvg} from Strava to Apple workout ${appleW.id}`);
                     }
+                    if (stravaW.heartRateMax != null && (merged.heartRateMax == null || (stravaW.heartRateData && stravaW.heartRateData.length > 0))) {
+                        merged.heartRateMax = stravaW.heartRateMax;
+                    }
+                    if (stravaW.heartRateMin != null && (merged.heartRateMin == null || (stravaW.heartRateData && stravaW.heartRateData.length > 0))) {
+                        merged.heartRateMin = stravaW.heartRateMin;
+                    }
+                    
+                    // Always merge HR data from Strava if it exists and is more detailed
+                    if (stravaW.heartRateData && stravaW.heartRateData.length > 0) {
+                        if (!merged.heartRateData || merged.heartRateData.length === 0 || stravaW.heartRateData.length > merged.heartRateData.length) {
+                            merged.heartRateData = stravaW.heartRateData;
+                            console.log(`[Dedup] Merged ${stravaW.heartRateData.length} HR data points from Strava to Apple workout ${appleW.id}`);
+                            
+                            // Recalculate HR stats from the more detailed Strava data
+                            const hrValues = stravaW.heartRateData.map(hr => typeof hr === 'object' ? hr.value : hr);
+                            merged.heartRateAvg = Math.round(hrValues.reduce((sum, val) => sum + val, 0) / hrValues.length);
+                            merged.heartRateMin = Math.min(...hrValues);
+                            merged.heartRateMax = Math.max(...hrValues);
+                            console.log(`[Dedup] Calculated HR stats from Strava data: avg=${merged.heartRateAvg}, min=${merged.heartRateMin}, max=${merged.heartRateMax}`);
+                        }
+                    }
+                    
+                    // Fill missing other metrics from Strava
+                    if (!merged.calories && stravaW.calories) merged.calories = stravaW.calories;
+                    if (!merged.elevation) {
+                        merged.elevation = stravaW.elevation || stravaW.elevationGain;
+                    }
+                    if (!merged.pace && stravaW.pace) merged.pace = stravaW.pace;
+                    if (!merged.paceMinPerKm) {
+                        merged.paceMinPerKm = merged.pace || stravaW.pace || stravaW.paceMinPerKm;
+                    }
+                    if (!merged.cadence && (stravaW.cadence || stravaW.cadenceAvg)) {
+                        merged.cadence = stravaW.cadence || stravaW.cadenceAvg;
+                    }
+                    if (!merged.cadenceAvg && stravaW.cadenceAvg) merged.cadenceAvg = stravaW.cadenceAvg;
+                    if (!merged.cadenceData || merged.cadenceData.length === 0) {
+                        if (stravaW.cadenceData && stravaW.cadenceData.length > 0) {
+                            merged.cadenceData = stravaW.cadenceData;
+                        }
+                    }
+                    
+                    // Fill missing stride data from Strava (though usually Apple has this)
+                    if (!merged.strideLength && stravaW.strideLength) merged.strideLength = stravaW.strideLength;
+                    if (!merged.strideLengthAvg && stravaW.strideLengthAvg) merged.strideLengthAvg = stravaW.strideLengthAvg;
+                    if ((!merged.strideLengthData || merged.strideLengthData.length === 0) && stravaW.strideLengthData && stravaW.strideLengthData.length > 0) {
+                        merged.strideLengthData = stravaW.strideLengthData;
+                    }
+                    
+                    // Calculate HR stats from HR data if we have data but missing stats
+                    if (merged.heartRateData && merged.heartRateData.length > 0) {
+                        if ((merged.heartRateAvg == null) || (merged.heartRateMin == null) || (merged.heartRateMax == null)) {
+                            const hrValues = merged.heartRateData.map(hr => typeof hr === 'object' ? hr.value : hr);
+                            if (merged.heartRateAvg == null) {
+                                merged.heartRateAvg = Math.round(hrValues.reduce((sum, val) => sum + val, 0) / hrValues.length);
+                                console.log(`[Dedup] Calculated HR avg ${merged.heartRateAvg} from ${hrValues.length} HR data points for Apple workout ${appleW.id}`);
+                            }
+                            if (merged.heartRateMin == null) merged.heartRateMin = Math.min(...hrValues);
+                            if (merged.heartRateMax == null) merged.heartRateMax = Math.max(...hrValues);
+                        }
+                    }
+                    
+                    // Mark as merged so we know it has data from both sources
+                    merged.mergedFromStrava = true;
+                    
+                    return merged;
                 }
             }
-        }
+            
+            // No matching Strava workout found, return original
+            return appleW;
+        });
 
         // Filter out duplicate Strava workouts
         const filteredStrava = stravaWorkouts.filter(w => !stravaDuplicateIds.has(w.id));
 
-        return [...appleWorkouts, ...filteredStrava, ...otherWorkouts];
+        return [...mergedAppleWorkouts, ...filteredStrava, ...otherWorkouts];
+    }
+
+    // Debug function to check workout data (call from console: app.debugWorkout('2025-05-15'))
+    debugWorkout(dateString) {
+        const targetDate = new Date(dateString + 'T00:00:00');
+        const workouts = this.workouts.filter(w => {
+            const wDate = w.dateObj || new Date(w.date);
+            return wDate.toDateString() === targetDate.toDateString();
+        });
+        
+        console.log(`=== DEBUG: Workouts for ${dateString} ===`);
+        console.log(`Found ${workouts.length} workouts:`);
+        workouts.forEach(w => {
+            console.log(`\n${w.source.toUpperCase()} Workout:`, {
+                id: w.id,
+                date: w.date,
+                distanceKm: w.distanceKm,
+                heartRateAvg: w.heartRateAvg,
+                heartRateMax: w.heartRateMax,
+                heartRateMin: w.heartRateMin,
+                heartRateDataLength: w.heartRateData?.length || 0,
+                mergedFromStrava: w.mergedFromStrava
+            });
+        });
+        
+        // Check deduplicated version
+        const deduped = this.deduplicateWorkoutsList([...this.workouts]);
+        const dedupedWorkouts = deduped.filter(w => {
+            const wDate = w.dateObj || new Date(w.date);
+            return wDate.toDateString() === targetDate.toDateString();
+        });
+        
+        console.log(`\n=== After Deduplication ===`);
+        console.log(`Found ${dedupedWorkouts.length} workouts:`);
+        dedupedWorkouts.forEach(w => {
+            console.log(`\n${w.source.toUpperCase()} Workout:`, {
+                id: w.id,
+                date: w.date,
+                distanceKm: w.distanceKm,
+                heartRateAvg: w.heartRateAvg,
+                heartRateMax: w.heartRateMax,
+                heartRateMin: w.heartRateMin,
+                heartRateDataLength: w.heartRateData?.length || 0,
+                mergedFromStrava: w.mergedFromStrava
+            });
+        });
+        
+        // Check enriched version
+        const enriched = dedupedWorkouts.map(w => this.enrichWorkoutData(w));
+        console.log(`\n=== After Enrichment ===`);
+        enriched.forEach(w => {
+            console.log(`\n${w.source.toUpperCase()} Workout:`, {
+                id: w.id,
+                date: w.date,
+                distanceKm: w.distanceKm,
+                heartRateAvg: w.heartRateAvg,
+                heartRateMax: w.heartRateMax,
+                heartRateMin: w.heartRateMin,
+                heartRateDataLength: w.heartRateData?.length || 0,
+                mergedFromStrava: w.mergedFromStrava
+            });
+        });
+        
+        return { original: workouts, deduped: dedupedWorkouts, enriched };
     }
 
     async init() {
@@ -334,12 +475,14 @@ class App {
             this.updateCharts();
         });
 
-        // Clear data
+        // Clear Apple Health data
         document.getElementById('clearAllData').addEventListener('click', async () => {
-            if (confirm('Are you sure you want to delete all local data? This cannot be undone.')) {
-                await db.clearAllData();
-                strava.clearTokens();
-                location.reload();
+            if (confirm('Are you sure you want to delete all Apple Health data? This will not affect your Strava data. This cannot be undone.')) {
+                await db.clearWorkoutsBySource('apple');
+                // Reload data and update UI
+                await this.loadData();
+                this.updateUI();
+                alert('Apple Health data cleared successfully!');
             }
         });
 
@@ -1443,31 +1586,50 @@ class App {
         try {
             const activities = await strava.fetchRunningActivities();
 
-            // Fetch detailed HR data for activities that have heart rate
-            // Only fetch for new activities or those without HR data
+            // Fetch detailed HR data for activities
+            // Try to fetch HR streams for activities that don't have HR data yet
+            // Even if average_heartrate is not in summary, HR might be in streams
             const existingWorkouts = await db.getAllWorkouts();
-            const existingStravaIds = new Set(
+            const existingStravaIdsWithHR = new Set(
                 existingWorkouts
                     .filter(w => w.source === 'strava' && w.heartRateData && w.heartRateData.length > 0)
                     .map(w => w.stravaId)
             );
 
+            // Find activities that need HR data:
+            // 1. Don't already have HR data in database, OR
+            // 2. Have average_heartrate in summary but no detailed HR streams
             const activitiesNeedingHR = activities.filter(a =>
-                a.heartRateAvg && !existingStravaIds.has(a.stravaId)
+                !existingStravaIdsWithHR.has(a.stravaId)
             );
 
-            console.log(`Found ${activities.length} activities, ${activitiesNeedingHR.length} need HR data`);
+            console.log(`Found ${activities.length} activities, ${activitiesNeedingHR.length} need HR data check`);
 
             let hrFetched = 0;
             for (const activity of activitiesNeedingHR) {
                 try {
                     if (!silent) {
-                        btn.innerHTML = `<span class="spinner"></span> Fetching HR ${hrFetched + 1}/${activitiesNeedingHR.length}...`;
+                        btn.innerHTML = `<span class="spinner"></span> Checking HR ${hrFetched + 1}/${activitiesNeedingHR.length}...`;
                     }
+                    // Try to fetch HR streams even if average_heartrate is missing from summary
+                    // HR data might still be available in streams
+                    console.log(`Checking HR for activity ${activity.stravaId} (${activity.date}) - summary has HR: ${!!activity.heartRateAvg}`);
                     const hrData = await strava.fetchHeartRateData(activity.stravaId, activity.date);
                     if (hrData && hrData.length > 0) {
                         activity.heartRateData = hrData;
+                        // If we got HR data from streams but not from summary, calculate avg/min/max
+                        if (!activity.heartRateAvg && hrData.length > 0) {
+                            const hrValues = hrData.map(d => typeof d === 'object' ? d.value : d);
+                            activity.heartRateAvg = Math.round(hrValues.reduce((a, b) => a + b, 0) / hrValues.length);
+                            activity.heartRateMin = Math.min(...hrValues);
+                            activity.heartRateMax = Math.max(...hrValues);
+                            console.log(`✓ Calculated HR stats from streams for activity ${activity.stravaId} (${activity.date}): avg=${activity.heartRateAvg}, min=${activity.heartRateMin}, max=${activity.heartRateMax}`);
+                        } else {
+                            console.log(`✓ Found HR data in streams for activity ${activity.stravaId} (${activity.date}): ${hrData.length} samples`);
+                        }
                         hrFetched++;
+                    } else {
+                        console.log(`✗ No HR data in streams for activity ${activity.stravaId} (${activity.date})`);
                     }
                     // Small delay to avoid rate limiting
                     await new Promise(r => setTimeout(r, 200));
@@ -1478,12 +1640,22 @@ class App {
 
             // For activities that already have HR data, copy it from existing
             for (const activity of activities) {
-                if (!activity.heartRateData) {
-                    const existing = existingWorkouts.find(w =>
-                        w.source === 'strava' && w.stravaId === activity.stravaId && w.heartRateData
-                    );
-                    if (existing) {
+                const existing = existingWorkouts.find(w =>
+                    w.source === 'strava' && w.stravaId === activity.stravaId
+                );
+                if (existing) {
+                    if (existing.heartRateData && !activity.heartRateData) {
                         activity.heartRateData = existing.heartRateData;
+                    }
+                    // Preserve calculated HR stats if they exist (from streams)
+                    if (existing.heartRateAvg && !activity.heartRateAvg) {
+                        activity.heartRateAvg = existing.heartRateAvg;
+                    }
+                    if (existing.heartRateMin && !activity.heartRateMin) {
+                        activity.heartRateMin = existing.heartRateMin;
+                    }
+                    if (existing.heartRateMax && !activity.heartRateMax) {
+                        activity.heartRateMax = existing.heartRateMax;
                     }
                 }
             }
@@ -1639,10 +1811,23 @@ class App {
         // Total runs
         document.getElementById('totalRuns').textContent = this.workouts.length;
 
-        // Average pace
-        const validPaceWorkouts = this.workouts.filter(w => w.pace && w.pace > 0 && w.pace < 20);
+        // Average pace - calculate from distance/duration if missing
+        const validPaceWorkouts = this.workouts.filter(w => {
+            let pace = w.pace || w.paceMinPerKm;
+            if (!pace && w.distanceKm && w.duration && w.distanceKm > 0 && w.duration > 0) {
+                pace = w.duration / w.distanceKm;
+            }
+            return pace && pace > 0 && pace < 20;
+        }).map(w => {
+            let pace = w.pace || w.paceMinPerKm;
+            if (!pace && w.distanceKm && w.duration && w.distanceKm > 0 && w.duration > 0) {
+                pace = w.duration / w.distanceKm;
+            }
+            return pace;
+        });
+        
         if (validPaceWorkouts.length > 0) {
-            const avgPace = validPaceWorkouts.reduce((sum, w) => sum + w.pace, 0) / validPaceWorkouts.length;
+            const avgPace = validPaceWorkouts.reduce((sum, p) => sum + p, 0) / validPaceWorkouts.length;
             const displayPace = this.useMetric ? avgPace : avgPace * 1.60934;
             document.getElementById('avgPace').textContent = this.formatPace(displayPace);
         }
@@ -1687,8 +1872,11 @@ class App {
             const distance = this.useMetric ? distanceKm : distanceKm / 1.60934;
             const unit = this.useMetric ? 'km' : 'mi';
 
-            // Convert pace based on unit preference (pace is stored as min/km)
-            const paceMinPerKm = w.pace || 0;
+            // Calculate pace from distance and duration if missing
+            let paceMinPerKm = w.pace || w.paceMinPerKm || 0;
+            if (!paceMinPerKm && w.distanceKm && w.duration && w.distanceKm > 0 && w.duration > 0) {
+                paceMinPerKm = w.duration / w.distanceKm;
+            }
             const paceDisplay = paceMinPerKm > 0
                 ? this.formatPace(this.useMetric ? paceMinPerKm : paceMinPerKm * 1.60934)
                 : '--:--';
@@ -1716,6 +1904,108 @@ class App {
         }).join('');
     }
 
+    // Enrich workout with calculated metrics and matching data
+    enrichWorkoutData(workout) {
+        const enriched = { ...workout };
+        const workoutTime = (enriched.dateObj || new Date(enriched.date)).getTime();
+        
+        // Check for matching route data if routes are loaded
+        if (this.routes && this.routes.length > 0) {
+            const matchingRoute = this.routes.find(r => {
+                if (!r.startTime) return false;
+                const routeStart = r.startTime instanceof Date ? r.startTime.getTime() : new Date(r.startTime).getTime();
+                const timeDiff = Math.abs(routeStart - workoutTime);
+                return timeDiff < 5 * 60 * 1000; // 5 minutes tolerance
+            });
+            
+            // Get HR data and other metrics from route if available and not in workout
+            if (matchingRoute) {
+                if ((!enriched.heartRateData || enriched.heartRateData.length === 0) && matchingRoute.heartRateData && matchingRoute.heartRateData.length > 0) {
+                    enriched.heartRateData = matchingRoute.heartRateData;
+                }
+                if (!enriched.heartRateAvg && matchingRoute.heartRateAvg) enriched.heartRateAvg = matchingRoute.heartRateAvg;
+                if (!enriched.heartRateMin && matchingRoute.heartRateMin) enriched.heartRateMin = matchingRoute.heartRateMin;
+                if (!enriched.heartRateMax && matchingRoute.heartRateMax) enriched.heartRateMax = matchingRoute.heartRateMax;
+            }
+        }
+        
+        // Check for matching workout from other source for additional data
+        if (this.workouts && this.workouts.length > 0) {
+            const otherSource = enriched.source === 'apple' ? 'strava' : 'apple';
+            const matchingWorkout = this.workouts.find(w => {
+                if (w.source !== otherSource) return false;
+                const wTime = (w.dateObj || new Date(w.date)).getTime();
+                const timeDiff = Math.abs(wTime - workoutTime);
+                return timeDiff < 10 * 60 * 1000; // Within 10 minutes
+            });
+            
+            // Fill missing data from matching workout (use explicit null/undefined checks)
+            if (matchingWorkout) {
+                // Use == null to catch both null and undefined
+                if ((enriched.heartRateAvg == null) && matchingWorkout.heartRateAvg != null) {
+                    enriched.heartRateAvg = matchingWorkout.heartRateAvg;
+                    console.log(`[Enrich] Merged HR avg ${matchingWorkout.heartRateAvg} from ${matchingWorkout.source} to ${enriched.source} workout ${enriched.id}`);
+                }
+                if ((enriched.heartRateMin == null) && matchingWorkout.heartRateMin != null) {
+                    enriched.heartRateMin = matchingWorkout.heartRateMin;
+                }
+                if ((enriched.heartRateMax == null) && matchingWorkout.heartRateMax != null) {
+                    enriched.heartRateMax = matchingWorkout.heartRateMax;
+                }
+                if ((!enriched.heartRateData || enriched.heartRateData.length === 0) && matchingWorkout.heartRateData && matchingWorkout.heartRateData.length > 0) {
+                    enriched.heartRateData = matchingWorkout.heartRateData;
+                    console.log(`[Enrich] Merged ${matchingWorkout.heartRateData.length} HR data points from ${matchingWorkout.source} to ${enriched.source} workout ${enriched.id}`);
+                }
+                if (!enriched.pace && matchingWorkout.pace) enriched.pace = matchingWorkout.pace;
+                if (!enriched.paceMinPerKm) {
+                    enriched.paceMinPerKm = enriched.pace || matchingWorkout.pace || matchingWorkout.paceMinPerKm;
+                }
+                if (!enriched.strideLength && matchingWorkout.strideLength) enriched.strideLength = matchingWorkout.strideLength;
+                if (!enriched.strideLengthAvg && matchingWorkout.strideLengthAvg) enriched.strideLengthAvg = matchingWorkout.strideLengthAvg;
+                if ((!enriched.strideLengthData || enriched.strideLengthData.length === 0) && matchingWorkout.strideLengthData && matchingWorkout.strideLengthData.length > 0) {
+                    enriched.strideLengthData = matchingWorkout.strideLengthData;
+                }
+                if (!enriched.cadence && matchingWorkout.cadence) enriched.cadence = matchingWorkout.cadence;
+                if (!enriched.cadenceAvg && matchingWorkout.cadenceAvg) enriched.cadenceAvg = matchingWorkout.cadenceAvg;
+                if ((!enriched.cadenceData || enriched.cadenceData.length === 0) && matchingWorkout.cadenceData && matchingWorkout.cadenceData.length > 0) {
+                    enriched.cadenceData = matchingWorkout.cadenceData;
+                }
+            }
+        }
+        
+        // Calculate pace from distance and duration if missing
+        if (!enriched.pace && !enriched.paceMinPerKm && enriched.distanceKm && enriched.duration && enriched.distanceKm > 0 && enriched.duration > 0) {
+            enriched.pace = enriched.duration / enriched.distanceKm;
+            enriched.paceMinPerKm = enriched.pace;
+        }
+        
+        // Calculate HR stats from detailed HR data if missing
+        if (enriched.heartRateData && enriched.heartRateData.length > 0) {
+            if (!enriched.heartRateAvg || !enriched.heartRateMin || !enriched.heartRateMax) {
+                const hrValues = enriched.heartRateData.map(hr => typeof hr === 'object' ? hr.value : hr);
+                if (!enriched.heartRateAvg) {
+                    enriched.heartRateAvg = Math.round(hrValues.reduce((sum, val) => sum + val, 0) / hrValues.length);
+                }
+                if (!enriched.heartRateMin) enriched.heartRateMin = Math.min(...hrValues);
+                if (!enriched.heartRateMax) enriched.heartRateMax = Math.max(...hrValues);
+            }
+        }
+        
+        // Calculate stride stats from detailed stride data if average is missing
+        if (enriched.strideLengthData && enriched.strideLengthData.length > 0 && !enriched.strideLengthAvg) {
+            const strideValues = enriched.strideLengthData.map(s => typeof s === 'object' ? s.value : s);
+            enriched.strideLengthAvg = strideValues.reduce((sum, val) => sum + val, 0) / strideValues.length;
+        }
+        
+        // Calculate cadence stats from detailed cadence data if average is missing
+        if (enriched.cadenceData && enriched.cadenceData.length > 0 && !enriched.cadenceAvg) {
+            const cadenceValues = enriched.cadenceData.map(c => typeof c === 'object' ? c.value : c);
+            enriched.cadenceAvg = Math.round(cadenceValues.reduce((sum, val) => sum + val, 0) / cadenceValues.length);
+        }
+        
+        return enriched;
+    }
+
     // Filter workouts
     filterWorkouts() {
         const search = document.getElementById('workoutSearch').value.toLowerCase();
@@ -1728,6 +2018,9 @@ class App {
         if (!source || source === 'all') {
             filtered = this.deduplicateWorkoutsList(filtered);
         }
+        
+        // Enrich all workouts with calculated metrics before filtering
+        filtered = filtered.map(w => this.enrichWorkoutData(w));
 
         // Search filter
         if (search) {
@@ -1772,6 +2065,10 @@ class App {
             });
         }
 
+        // Re-enrich all filtered workouts to ensure metrics are calculated
+        // This ensures data is always available regardless of when filtering happens
+        filtered = filtered.map(w => this.enrichWorkoutData(w));
+        
         this.filteredWorkouts = filtered;
         this.currentPage = 1;
         this.sortWorkouts(this.sortColumn);
@@ -1810,6 +2107,21 @@ class App {
                     valA = a.calories || 0;
                     valB = b.calories || 0;
                     break;
+                case 'heartrate':
+                    // Calculate HR average from detailed data if missing
+                    let hrA = a.heartRateAvg;
+                    if (!hrA && a.heartRateData && a.heartRateData.length > 0) {
+                        const hrValues = a.heartRateData.map(hr => typeof hr === 'object' ? hr.value : hr);
+                        hrA = hrValues.reduce((sum, val) => sum + val, 0) / hrValues.length;
+                    }
+                    let hrB = b.heartRateAvg;
+                    if (!hrB && b.heartRateData && b.heartRateData.length > 0) {
+                        const hrValues = b.heartRateData.map(hr => typeof hr === 'object' ? hr.value : hr);
+                        hrB = hrValues.reduce((sum, val) => sum + val, 0) / hrValues.length;
+                    }
+                    valA = hrA || 0;
+                    valB = hrB || 0;
+                    break;
                 default:
                     valA = new Date(a.date);
                     valB = new Date(b.date);
@@ -1823,6 +2135,14 @@ class App {
 
     // Render workouts table
     renderWorkoutsTable() {
+        // Update sort indicators
+        document.querySelectorAll('.workouts-table th[data-sort]').forEach(th => {
+            const sortValue = th.dataset.sort;
+            const sortArrow = this.sortColumn === sortValue ? (this.sortDirection === 'desc' ? ' ↓' : ' ↑') : '';
+            const baseText = th.textContent.replace(/ [↓↑]/, '').trim();
+            th.textContent = baseText + sortArrow;
+        });
+
         const tbody = document.getElementById('workoutsTableBody');
         const start = (this.currentPage - 1) * this.pageSize;
         const end = Math.min(start + this.pageSize, this.filteredWorkouts.length);
@@ -1848,7 +2168,24 @@ class App {
         tbody.innerHTML = pageData.map((w, idx) => {
             const d = w.dateObj || new Date(w.date);
             const distance = this.useMetric ? w.distanceKm : w.distanceMi;
-            const pace = w.pace ? (this.useMetric ? w.pace : w.pace * 1.60934) : null;
+            
+            // Debug: Log workout if it's the one we're looking for
+            if (w.id && (w.id.includes('2025-05-16') || w.id.includes('2025-05-15'))) {
+                console.log(`[Render] Rendering workout ${w.id}:`, {
+                    heartRateAvg: w.heartRateAvg,
+                    heartRateMin: w.heartRateMin,
+                    heartRateMax: w.heartRateMax,
+                    heartRateDataLength: w.heartRateData?.length || 0,
+                    mergedFromStrava: w.mergedFromStrava
+                });
+            }
+            
+            // Calculate pace from distance and duration if missing
+            let paceMinPerKm = w.pace || w.paceMinPerKm;
+            if (!paceMinPerKm && w.distanceKm && w.duration && w.distanceKm > 0 && w.duration > 0) {
+                paceMinPerKm = w.duration / w.distanceKm;
+            }
+            const pace = paceMinPerKm ? (this.useMetric ? paceMinPerKm : paceMinPerKm * 1.60934) : null;
             const workoutIndex = start + idx;
 
             let hrDisplay = '--';
@@ -1857,17 +2194,33 @@ class App {
             let hrMax = w.heartRateMax;
             
             // If no average HR but we have detailed HR data, calculate it
-            if (!hrAvg && w.heartRateData && w.heartRateData.length > 0) {
+            // Use == null to catch both null and undefined, but allow 0 as valid
+            if ((hrAvg == null) && w.heartRateData && w.heartRateData.length > 0) {
                 const hrValues = w.heartRateData.map(hr => typeof hr === 'object' ? hr.value : hr);
                 hrAvg = hrValues.reduce((sum, val) => sum + val, 0) / hrValues.length;
                 hrMin = Math.min(...hrValues);
                 hrMax = Math.max(...hrValues);
             }
             
-            if (hrAvg) {
+            // Display HR if we have a valid value (including 0, but not null/undefined)
+            if (hrAvg != null && !isNaN(hrAvg) && isFinite(hrAvg)) {
                 hrDisplay = `<span style="color: var(--accent-primary)">${Math.round(hrAvg)}</span>`;
-                if (hrMin || hrMax) {
-                    hrDisplay += ` <span style="color: var(--text-muted)">(${Math.round(hrMin || 0)}-${Math.round(hrMax || 0)})</span>`;
+                if (hrMin != null || hrMax != null) {
+                    hrDisplay += ` <span style="color: var(--text-muted)">(${Math.round(hrMin != null ? hrMin : 0)}-${Math.round(hrMax != null ? hrMax : 0)})</span>`;
+                }
+            } else {
+                // Debug: Log why HR is not displaying
+                if (w.id && (w.id.includes('2025-05-16') || w.id.includes('2025-05-15'))) {
+                    console.log(`[Render] Workout ${w.id} HR not displaying:`, {
+                        hrAvg,
+                        hrMin,
+                        hrMax,
+                        heartRateAvg: w.heartRateAvg,
+                        heartRateDataLength: w.heartRateData?.length || 0,
+                        isNaN: isNaN(hrAvg),
+                        isFinite: isFinite(hrAvg),
+                        mergedFromStrava: w.mergedFromStrava
+                    });
                 }
             }
 
@@ -1883,7 +2236,10 @@ class App {
                     <td style="font-family: 'JetBrains Mono', monospace">${Math.round(w.calories || 0)}</td>
                     <td>${hrDisplay}</td>
                     <td>
-                        ${w.source === 'apple' ? '<span class="source-badge apple">🍎 Apple</span>' : ''}
+                        ${w.source === 'apple' ? 
+                            (w.mergedFromStrava ? 
+                                '<span class="source-badge apple">🍎 Apple</span> <span class="source-badge strava">🔶</span>' : 
+                                '<span class="source-badge apple">🍎 Apple</span>') : ''}
                         ${w.source === 'strava' ? '<span class="source-badge strava">🔶 Strava</span>' : ''}
                     </td>
                 </tr>
@@ -2181,7 +2537,13 @@ class App {
 
         const unit = this.useMetric ? 'km' : 'mi';
         const dist = this.useMetric ? (mergedWorkout.distanceKm || 0) : (mergedWorkout.distanceMi || 0);
-        const pace = this.useMetric ? mergedWorkout.paceMinPerKm : (mergedWorkout.paceMinPerKm * 1.60934);
+        
+        // Calculate pace from distance and duration if missing
+        let paceMinPerKm = mergedWorkout.pace || mergedWorkout.paceMinPerKm;
+        if (!paceMinPerKm && mergedWorkout.distanceKm && mergedWorkout.duration && mergedWorkout.distanceKm > 0 && mergedWorkout.duration > 0) {
+            paceMinPerKm = mergedWorkout.duration / mergedWorkout.distanceKm;
+        }
+        const pace = paceMinPerKm ? (this.useMetric ? paceMinPerKm : paceMinPerKm * 1.60934) : null;
 
         // Format date for title
         const dateStr = date.toLocaleDateString('en-US', {
@@ -2191,9 +2553,13 @@ class App {
             day: 'numeric'
         });
 
-        // Add source badge to title
-        const sourceBadge = mergedWorkout.source === 'apple' ? '🍎' :
-                           mergedWorkout.source === 'strava' ? '🔶' : '';
+        // Add source badge to title - show both if data was merged
+        let sourceBadge = '';
+        if (mergedWorkout.source === 'apple') {
+            sourceBadge = mergedWorkout.mergedFromStrava ? '🍎🔶' : '🍎';
+        } else if (mergedWorkout.source === 'strava') {
+            sourceBadge = '🔶';
+        }
         document.getElementById('workoutDetailTitle').textContent = `${sourceBadge} ${dateStr}`;
 
         // Summary stats
@@ -2270,13 +2636,23 @@ class App {
         const mapContainer = document.getElementById('detailRouteMap');
         const statsContainer = document.getElementById('detailRouteStats');
 
-        // Find matching route
-        const workoutTime = (workout.dateObj || new Date(workout.date)).getTime();
-        const matchingRoute = workout.matchingRoute || this.routes.find(r => {
-            if (!r.startTime) return false;
-            const routeStart = new Date(r.startTime).getTime();
-            return Math.abs(routeStart - workoutTime) < 5 * 60 * 1000;
-        });
+        // Find matching route - use same logic as routes tab (routesManager.linkRouteToWorkout)
+        // First check if route is already in merged workout
+        let matchingRoute = workout.matchingRoute;
+        
+        // If not found, search through all routes to find one that matches this workout
+        if (!matchingRoute) {
+            const workoutTime = (workout.dateObj || new Date(workout.date)).getTime();
+            
+            // Use same matching logic as linkRouteToWorkout - find route with matching start time
+            matchingRoute = this.routes.find(r => {
+                if (!r.startTime) return false;
+                // Handle both Date objects and ISO strings (same as routesManager)
+                const routeStart = r.startTime instanceof Date ? r.startTime.getTime() : new Date(r.startTime).getTime();
+                const timeDiff = Math.abs(routeStart - workoutTime);
+                return timeDiff < 5 * 60 * 1000; // 5 minutes tolerance (same as linkRouteToWorkout)
+            });
+        }
 
         if (!matchingRoute || !matchingRoute.points || matchingRoute.points.length === 0) {
             routeSection.style.display = 'none';
@@ -2291,43 +2667,53 @@ class App {
             this.detailMap = null;
         }
 
-        // Create new map
-        this.detailMap = L.map(mapContainer).setView([0, 0], 13);
-        L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-            attribution: '&copy; OpenStreetMap contributors &copy; CARTO'
-        }).addTo(this.detailMap);
-
-        // Create route line
-        const coordinates = matchingRoute.points.map(p => [p.lat, p.lon]);
-        const routeLine = L.polyline(coordinates, {
-            color: '#ff6b35',
-            weight: 4,
-            opacity: 0.9
-        }).addTo(this.detailMap);
-
-        // Add start/end markers
-        if (coordinates.length > 0) {
-            L.marker(coordinates[0], {
-                icon: L.divIcon({
-                    className: 'route-marker start',
-                    html: '<div style="background: #22c55e; color: white; width: 24px; height: 24px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 12px;">S</div>',
-                    iconSize: [24, 24],
-                    iconAnchor: [12, 12]
-                })
+        // Wait for modal to be visible before creating map
+        setTimeout(() => {
+            // Create new map
+            this.detailMap = L.map(mapContainer).setView([0, 0], 13);
+            L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+                attribution: '&copy; OpenStreetMap contributors &copy; CARTO'
             }).addTo(this.detailMap);
 
-            L.marker(coordinates[coordinates.length - 1], {
-                icon: L.divIcon({
-                    className: 'route-marker end',
-                    html: '<div style="background: #ef4444; color: white; width: 24px; height: 24px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 12px;">F</div>',
-                    iconSize: [24, 24],
-                    iconAnchor: [12, 12]
-                })
+            // Create route line
+            const coordinates = matchingRoute.points.map(p => [p.lat, p.lon]);
+            const routeLine = L.polyline(coordinates, {
+                color: '#ff6b35',
+                weight: 4,
+                opacity: 0.9
             }).addTo(this.detailMap);
-        }
 
-        // Fit map to route bounds
-        this.detailMap.fitBounds(routeLine.getBounds(), { padding: [20, 20] });
+            // Add start/end markers
+            if (coordinates.length > 0) {
+                L.marker(coordinates[0], {
+                    icon: L.divIcon({
+                        className: 'route-marker start',
+                        html: '<div style="background: #22c55e; color: white; width: 24px; height: 24px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 12px;">S</div>',
+                        iconSize: [24, 24],
+                        iconAnchor: [12, 12]
+                    })
+                }).addTo(this.detailMap);
+
+                L.marker(coordinates[coordinates.length - 1], {
+                    icon: L.divIcon({
+                        className: 'route-marker end',
+                        html: '<div style="background: #ef4444; color: white; width: 24px; height: 24px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 12px;">F</div>',
+                        iconSize: [24, 24],
+                        iconAnchor: [12, 12]
+                    })
+                }).addTo(this.detailMap);
+            }
+
+            // Fit map to route bounds
+            this.detailMap.fitBounds(routeLine.getBounds(), { padding: [20, 20] });
+            
+            // Invalidate size after modal animation completes
+            setTimeout(() => {
+                if (this.detailMap) {
+                    this.detailMap.invalidateSize();
+                }
+            }, 300);
+        }, 100);
 
         // Show route stats
         const unit = this.useMetric ? 'km' : 'mi';
@@ -2363,30 +2749,48 @@ class App {
             return timeDiff < 10 * 60 * 1000; // Within 10 minutes
         });
 
-        // Find matching route for detailed data
+        // Find matching route for detailed data - use same logic as routesManager.linkRouteToWorkout
         const matchingRoute = this.routes.find(r => {
             if (!r.startTime) return false;
-            const routeStart = new Date(r.startTime).getTime();
-            return Math.abs(routeStart - workoutTime) < 5 * 60 * 1000;
+            // Handle both Date objects and ISO strings
+            const routeStart = r.startTime instanceof Date ? r.startTime.getTime() : new Date(r.startTime).getTime();
+            const timeDiff = Math.abs(routeStart - workoutTime);
+            return timeDiff < 5 * 60 * 1000; // 5 minutes tolerance
         });
 
         // Merge data - prefer existing values, fill gaps from other sources
         const merged = { ...workout };
 
         if (matchingWorkout) {
-            // Fill missing fields from matching workout
-            merged.heartRateAvg = merged.heartRateAvg || matchingWorkout.heartRateAvg;
-            merged.heartRateMax = merged.heartRateMax || matchingWorkout.heartRateMax;
-            merged.heartRateMin = merged.heartRateMin || matchingWorkout.heartRateMin;
-            merged.calories = merged.calories || matchingWorkout.calories;
-            merged.elevation = merged.elevation || matchingWorkout.elevation;
-            merged.cadence = merged.cadence || matchingWorkout.cadence;
-            merged.strideLength = merged.strideLength || matchingWorkout.strideLength;
-            merged.heartRateData = merged.heartRateData || matchingWorkout.heartRateData;
-            merged.cadenceData = merged.cadenceData || matchingWorkout.cadenceData;
-            merged.strideLengthData = merged.strideLengthData || matchingWorkout.strideLengthData;
-            merged.cadenceAvg = merged.cadenceAvg || matchingWorkout.cadenceAvg;
-            merged.strideLengthAvg = merged.strideLengthAvg || matchingWorkout.strideLengthAvg;
+            // Fill missing fields from matching workout (use explicit null/undefined checks)
+            if (!merged.heartRateAvg && matchingWorkout.heartRateAvg) merged.heartRateAvg = matchingWorkout.heartRateAvg;
+            if (!merged.heartRateMax && matchingWorkout.heartRateMax) merged.heartRateMax = matchingWorkout.heartRateMax;
+            if (!merged.heartRateMin && matchingWorkout.heartRateMin) merged.heartRateMin = matchingWorkout.heartRateMin;
+            if ((!merged.heartRateData || merged.heartRateData.length === 0) && matchingWorkout.heartRateData && matchingWorkout.heartRateData.length > 0) {
+                merged.heartRateData = matchingWorkout.heartRateData;
+            }
+            if (!merged.calories && matchingWorkout.calories) merged.calories = matchingWorkout.calories;
+            if (!merged.elevation && matchingWorkout.elevation) merged.elevation = matchingWorkout.elevation;
+            if (!merged.cadence && matchingWorkout.cadence) merged.cadence = matchingWorkout.cadence;
+            if (!merged.strideLength && matchingWorkout.strideLength) merged.strideLength = matchingWorkout.strideLength;
+            if (!merged.pace && matchingWorkout.pace) merged.pace = matchingWorkout.pace;
+            if (!merged.paceMinPerKm) {
+                merged.paceMinPerKm = merged.pace || matchingWorkout.pace || matchingWorkout.paceMinPerKm;
+            }
+            if ((!merged.cadenceData || merged.cadenceData.length === 0) && matchingWorkout.cadenceData && matchingWorkout.cadenceData.length > 0) {
+                merged.cadenceData = matchingWorkout.cadenceData;
+            }
+            if ((!merged.strideLengthData || merged.strideLengthData.length === 0) && matchingWorkout.strideLengthData && matchingWorkout.strideLengthData.length > 0) {
+                merged.strideLengthData = matchingWorkout.strideLengthData;
+            }
+            if (!merged.cadenceAvg && matchingWorkout.cadenceAvg) merged.cadenceAvg = matchingWorkout.cadenceAvg;
+            if (!merged.strideLengthAvg && matchingWorkout.strideLengthAvg) merged.strideLengthAvg = matchingWorkout.strideLengthAvg;
+        }
+        
+        // Calculate pace from distance and duration if still missing
+        if (!merged.pace && !merged.paceMinPerKm && merged.distanceKm && merged.duration && merged.distanceKm > 0 && merged.duration > 0) {
+            merged.pace = merged.duration / merged.distanceKm;
+            merged.paceMinPerKm = merged.pace;
         }
 
         if (matchingRoute) {
@@ -2395,7 +2799,12 @@ class App {
                 merged.elevation = this.calculateElevationGain(matchingRoute.points);
             }
             // Get HR data from route if available
-            merged.heartRateData = merged.heartRateData || matchingRoute.heartRateData;
+            if ((!merged.heartRateData || merged.heartRateData.length === 0) && matchingRoute.heartRateData && matchingRoute.heartRateData.length > 0) {
+                merged.heartRateData = matchingRoute.heartRateData;
+            }
+            if (!merged.heartRateAvg && matchingRoute.heartRateAvg) merged.heartRateAvg = matchingRoute.heartRateAvg;
+            if (!merged.heartRateMin && matchingRoute.heartRateMin) merged.heartRateMin = matchingRoute.heartRateMin;
+            if (!merged.heartRateMax && matchingRoute.heartRateMax) merged.heartRateMax = matchingRoute.heartRateMax;
             merged.matchingRoute = matchingRoute;
         }
 
@@ -2403,10 +2812,24 @@ class App {
         if (merged.heartRateData && merged.heartRateData.length > 0) {
             if (!merged.heartRateAvg || !merged.heartRateMin || !merged.heartRateMax) {
                 const hrValues = merged.heartRateData.map(hr => typeof hr === 'object' ? hr.value : hr);
-                merged.heartRateAvg = merged.heartRateAvg || hrValues.reduce((sum, val) => sum + val, 0) / hrValues.length;
-                merged.heartRateMin = merged.heartRateMin || Math.min(...hrValues);
-                merged.heartRateMax = merged.heartRateMax || Math.max(...hrValues);
+                if (!merged.heartRateAvg) {
+                    merged.heartRateAvg = Math.round(hrValues.reduce((sum, val) => sum + val, 0) / hrValues.length);
+                }
+                if (!merged.heartRateMin) merged.heartRateMin = Math.min(...hrValues);
+                if (!merged.heartRateMax) merged.heartRateMax = Math.max(...hrValues);
             }
+        }
+        
+        // Calculate stride stats from detailed data if average is missing
+        if (merged.strideLengthData && merged.strideLengthData.length > 0 && !merged.strideLengthAvg) {
+            const strideValues = merged.strideLengthData.map(s => typeof s === 'object' ? s.value : s);
+            merged.strideLengthAvg = strideValues.reduce((sum, val) => sum + val, 0) / strideValues.length;
+        }
+        
+        // Calculate cadence stats from detailed data if average is missing
+        if (merged.cadenceData && merged.cadenceData.length > 0 && !merged.cadenceAvg) {
+            const cadenceValues = merged.cadenceData.map(c => typeof c === 'object' ? c.value : c);
+            merged.cadenceAvg = Math.round(cadenceValues.reduce((sum, val) => sum + val, 0) / cadenceValues.length);
         }
 
         return merged;
@@ -2632,11 +3055,15 @@ class App {
             }
         } else {
             // Show flat line at average pace across estimated distance
-            const avgPace = this.useMetric ? workout.paceMinPerKm : (workout.paceMinPerKm * 1.60934);
+            let paceMinPerKm = workout.pace || workout.paceMinPerKm;
+            if (!paceMinPerKm && workout.distanceKm && workout.duration && workout.distanceKm > 0 && workout.duration > 0) {
+                paceMinPerKm = workout.duration / workout.distanceKm;
+            }
+            const avgPace = paceMinPerKm ? (this.useMetric ? paceMinPerKm : paceMinPerKm * 1.60934) : 0;
             const totalDist = this.useMetric ? (workout.distanceKm || 0) : (workout.distanceMi || 0);
             for (let i = 0; i <= 10; i++) {
                 labels.push((totalDist * i / 10).toFixed(2));
-                paceData.push(avgPace);
+                paceData.push(avgPace || null);
             }
         }
 

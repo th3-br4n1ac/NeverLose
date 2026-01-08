@@ -219,23 +219,39 @@ class StravaClient {
         try {
             const streams = await this.fetchActivityStreams(activityId, 'heartrate,time');
             
-            if (!streams.heartrate || !streams.time) {
+            // Handle different response formats
+            let heartrateStream, timeStream;
+            
+            if (Array.isArray(streams)) {
+                // If streams is an array, find heartrate and time streams
+                heartrateStream = streams.find(s => s.type === 'heartrate');
+                timeStream = streams.find(s => s.type === 'time');
+            } else {
+                // If streams is an object with key_by_type=true
+                heartrateStream = streams.heartrate;
+                timeStream = streams.time;
+            }
+            
+            if (!heartrateStream || !timeStream || !heartrateStream.data || !timeStream.data) {
+                console.log(`No HR streams available for activity ${activityId}`);
                 return null;
             }
 
             const startTime = new Date(startDate).getTime();
             const hrData = [];
+            const hrArray = heartrateStream.data;
+            const timeArray = timeStream.data;
 
-            for (let i = 0; i < streams.heartrate.data.length; i++) {
+            for (let i = 0; i < Math.min(hrArray.length, timeArray.length); i++) {
                 hrData.push({
-                    time: startTime + (streams.time.data[i] * 1000), // time is in seconds from start
-                    value: streams.heartrate.data[i]
+                    time: startTime + (timeArray[i] * 1000), // time is in seconds from start
+                    value: hrArray[i]
                 });
             }
 
-            return hrData;
+            return hrData.length > 0 ? hrData : null;
         } catch (error) {
-            console.error('Error fetching HR stream:', error);
+            console.error(`Error fetching HR stream for activity ${activityId}:`, error);
             return null;
         }
     }

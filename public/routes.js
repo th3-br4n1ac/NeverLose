@@ -820,7 +820,8 @@ class RoutesManager {
     linkRouteToWorkout(route, workouts) {
         if (!route.startTime || !workouts || workouts.length === 0) return null;
 
-        const routeStart = route.startTime.getTime();
+        // Handle both Date objects and ISO strings
+        const routeStart = route.startTime instanceof Date ? route.startTime.getTime() : new Date(route.startTime).getTime();
         
         // Find workout that matches this route's start time (within 5 minutes)
         const matchingWorkout = workouts.find(w => {
@@ -853,7 +854,9 @@ class RoutesManager {
         // Check for detailed HR data on the route itself
         if (route.heartRateData && route.heartRateData.length > 0) {
             // Find the closest HR data point
-            const targetTime = route.startTime.getTime() + elapsedMs;
+            // Handle both Date objects and ISO strings
+            const routeStartTime = route.startTime instanceof Date ? route.startTime.getTime() : new Date(route.startTime).getTime();
+            const targetTime = routeStartTime + elapsedMs;
             let closest = route.heartRateData[0];
             let closestDiff = Infinity;
             
