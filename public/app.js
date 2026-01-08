@@ -2570,40 +2570,53 @@ class App {
         if (!statsContainer) return;
 
         statsContainer.innerHTML = this.selectedComparisonWorkouts.map((w, index) => {
-            const d = w.dateObj || new Date(w.date);
+            const mergedWorkout = this.getMergedWorkoutData(w);
+            const d = mergedWorkout.dateObj || new Date(mergedWorkout.date);
             const dateStr = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-            const distanceKm = w.distanceKm || 0;
+            const distanceKm = mergedWorkout.distanceKm || 0;
             const distance = this.useMetric ? distanceKm : distanceKm / 1.60934;
             const unit = this.useMetric ? 'km' : 'mi';
             
-            // Get metric-specific stat
-            let metricValue = '--';
-            let metricLabel = '';
-            
-            switch(metric) {
-                case 'heartrate':
-                    metricLabel = 'Avg HR';
-                    metricValue = w.heartRateAvg ? Math.round(w.heartRateAvg) + ' bpm' : '--';
-                    break;
-                case 'pace':
-                    metricLabel = 'Avg Pace';
-                    let paceMinPerKm = w.pace || w.paceMinPerKm || 0;
-                    if (!paceMinPerKm && w.distanceKm && w.duration && w.distanceKm > 0 && w.duration > 0) {
-                        paceMinPerKm = w.duration / w.distanceKm;
-                    }
-                    metricValue = paceMinPerKm > 0
-                        ? this.formatPace(this.useMetric ? paceMinPerKm : paceMinPerKm * 1.60934) + `/${unit}`
-                        : '--';
-                    break;
-                case 'cadence':
-                    metricLabel = 'Avg Cadence';
-                    metricValue = w.cadenceAvg || w.cadence ? Math.round(w.cadenceAvg || w.cadence) + ' spm' : '--';
-                    break;
-                case 'stride':
-                    metricLabel = 'Avg Stride';
-                    metricValue = w.strideLengthAvg ? (w.strideLengthAvg * 100).toFixed(0) + ' cm' : '--';
-                    break;
+            // Calculate pace
+            let paceMinPerKm = mergedWorkout.pace || mergedWorkout.paceMinPerKm || 0;
+            if (!paceMinPerKm && mergedWorkout.distanceKm && mergedWorkout.duration && mergedWorkout.distanceKm > 0 && mergedWorkout.duration > 0) {
+                paceMinPerKm = mergedWorkout.duration / mergedWorkout.distanceKm;
             }
+            const avgPace = paceMinPerKm > 0
+                ? this.formatPace(this.useMetric ? paceMinPerKm : paceMinPerKm * 1.60934) + `/${unit}`
+                : '--:--';
+            
+            // Calculate best pace from route data
+            const bestPace = this.getBestPaceFromRoute(mergedWorkout);
+            const bestPaceDisplay = bestPace ? this.formatPace(bestPace) + `/${unit}` : '--:--';
+            
+            // Heart rate stats
+            let hrMin = mergedWorkout.heartRateMin;
+            let hrMax = mergedWorkout.heartRateMax;
+            if ((!hrMin || !hrMax) && mergedWorkout.heartRateData && mergedWorkout.heartRateData.length > 0) {
+                const hrValues = mergedWorkout.heartRateData.map(hr => typeof hr === 'object' ? hr.value : hr);
+                if (!hrMin) hrMin = Math.min(...hrValues);
+                if (!hrMax) hrMax = Math.max(...hrValues);
+            }
+            
+            // Calculate VO2max
+            const vo2max = this.calculateVO2Max(mergedWorkout);
+            
+            // Cadence
+            const cadence = mergedWorkout.cadenceAvg || mergedWorkout.cadence;
+            const cadenceDisplay = cadence ? Math.round(cadence) + ' spm' : '--';
+            
+            // Stride length
+            const stride = mergedWorkout.strideLengthAvg;
+            const strideDisplay = stride ? (this.useMetric ? stride.toFixed(2) + ' m' : (stride * 3.28084).toFixed(2) + ' ft') : '--';
+            
+            // Elevation
+            const elevation = mergedWorkout.elevation || 0;
+            const elevationDisplay = elevation ? Math.round(elevation) + ' m' : '--';
+            
+            // Calories
+            const calories = mergedWorkout.calories || 0;
+            const caloriesDisplay = calories ? Math.round(calories) : '--';
 
             return `
                 <div class="comparison-stat-card" style="
@@ -2612,12 +2625,68 @@ class App {
                     border-radius: 12px;
                     padding: 16px;
                 ">
-                    <h4 style="margin-bottom: 12px; color: var(--text-primary);">Run ${index + 1}: ${dateStr}</h4>
-                    <div style="font-size: 0.9rem;">
-                        <div style="margin-bottom: 8px;"><strong>Distance:</strong> ${distance.toFixed(2)} ${unit}</div>
-                        <div style="margin-bottom: 8px;"><strong>Duration:</strong> ${w.durationFormatted || '--:--'}</div>
-                        <div style="font-size: 1.1rem; color: var(--accent-primary); margin-top: 12px; margin-bottom: 12px;"><strong>${metricLabel}:</strong> ${metricValue}</div>
+                    <h4 style="margin-bottom: 16px; color: var(--text-primary); font-size: 1.1rem;">Run ${index + 1}: ${dateStr}</h4>
+                    
+                    <!-- Primary Stats -->
+                    <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin-bottom: 16px;">
+                        <div>
+                            <div style="font-size: 0.75rem; color: var(--text-secondary); margin-bottom: 4px;">Distance</div>
+                            <div style="font-size: 1.1rem; font-weight: 600; color: var(--text-primary);">${distance.toFixed(2)} ${unit}</div>
+                        </div>
+                        <div>
+                            <div style="font-size: 0.75rem; color: var(--text-secondary); margin-bottom: 4px;">Duration</div>
+                            <div style="font-size: 1.1rem; font-weight: 600; color: var(--text-primary);">${mergedWorkout.durationFormatted || '--:--'}</div>
+                        </div>
+                        <div>
+                            <div style="font-size: 0.75rem; color: var(--text-secondary); margin-bottom: 4px;">Avg Pace</div>
+                            <div style="font-size: 1.1rem; font-weight: 600; color: var(--text-primary);">${avgPace}</div>
+                        </div>
+                        <div>
+                            <div style="font-size: 0.75rem; color: var(--text-secondary); margin-bottom: 4px;">Avg HR</div>
+                            <div style="font-size: 1.1rem; font-weight: 600; color: var(--accent-primary);">${mergedWorkout.heartRateAvg ? Math.round(mergedWorkout.heartRateAvg) + ' bpm' : '--'}</div>
+                        </div>
+                        <div>
+                            <div style="font-size: 0.75rem; color: var(--text-secondary); margin-bottom: 4px;">Est. VO2MAX</div>
+                            <div style="font-size: 1.1rem; font-weight: 600; color: var(--text-primary);">${vo2max ? vo2max.toFixed(1) : '--'}</div>
+                        </div>
+                        <div>
+                            <div style="font-size: 0.75rem; color: var(--text-secondary); margin-bottom: 4px;">Calories</div>
+                            <div style="font-size: 1.1rem; font-weight: 600; color: var(--text-primary);">${caloriesDisplay}</div>
+                        </div>
                     </div>
+                    
+                    <!-- Additional Stats -->
+                    <div style="border-top: 1px solid var(--border-color); padding-top: 12px; margin-bottom: 16px;">
+                        <div style="font-size: 0.75rem; color: var(--text-secondary); margin-bottom: 8px; font-weight: 500;">Additional Stats</div>
+                        <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; font-size: 0.85rem;">
+                            <div>
+                                <span style="color: var(--text-secondary);">Max HR:</span>
+                                <span style="color: var(--text-primary); margin-left: 4px;">${hrMax ? Math.round(hrMax) + ' bpm' : '--'}</span>
+                            </div>
+                            <div>
+                                <span style="color: var(--text-secondary);">Min HR:</span>
+                                <span style="color: var(--text-primary); margin-left: 4px;">${hrMin ? Math.round(hrMin) + ' bpm' : '--'}</span>
+                            </div>
+                            <div>
+                                <span style="color: var(--text-secondary);">Best Pace:</span>
+                                <span style="color: var(--text-primary); margin-left: 4px;">${bestPaceDisplay}</span>
+                            </div>
+                            <div>
+                                <span style="color: var(--text-secondary);">Elevation Gain:</span>
+                                <span style="color: var(--text-primary); margin-left: 4px;">${elevationDisplay}</span>
+                            </div>
+                            <div>
+                                <span style="color: var(--text-secondary);">Cadence:</span>
+                                <span style="color: var(--text-primary); margin-left: 4px;">${cadenceDisplay}</span>
+                            </div>
+                            <div>
+                                <span style="color: var(--text-secondary);">Stride Length:</span>
+                                <span style="color: var(--text-primary); margin-left: 4px;">${strideDisplay}</span>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Route Map -->
                     <div class="comparison-route-map" id="comparisonRouteMap_${index}" style="
                         height: 250px; 
                         width: 100%; 
