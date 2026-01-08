@@ -246,19 +246,10 @@ class App {
         // File upload
         const uploadZone = document.getElementById('uploadZone');
         const fileInput = document.getElementById('fileInput');
-        const selectFileBtn = document.getElementById('selectFileBtn');
-
-        // Button click for iOS compatibility
-        if (selectFileBtn) {
-            selectFileBtn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                fileInput.click();
-            });
-        }
 
         uploadZone.addEventListener('click', (e) => {
-            // Don't trigger if clicking the file input or button directly
-            if (e.target !== fileInput && e.target !== selectFileBtn) {
+            // Don't trigger if clicking the file input directly (label handles it)
+            if (e.target !== fileInput && !e.target.closest('label')) {
                 fileInput.click();
             }
         });
@@ -277,6 +268,13 @@ class App {
             }
         });
         fileInput.addEventListener('change', (e) => {
+            if (e.target.files && e.target.files.length > 0) {
+                this.handleFileUpload(e.target.files[0]);
+            }
+        });
+        
+        // iOS sometimes needs input event as well
+        fileInput.addEventListener('input', (e) => {
             if (e.target.files && e.target.files.length > 0) {
                 this.handleFileUpload(e.target.files[0]);
             }
@@ -307,18 +305,26 @@ class App {
 
         // Unit toggle
         document.querySelectorAll('.toggle-btn[data-unit]').forEach(btn => {
-            btn.addEventListener('click', () => {
+            btn.addEventListener('click', async () => {
                 this.useMetric = btn.dataset.unit === 'km';
-                db.setSetting('useMetric', this.useMetric);
+                try {
+                    await db.setSetting('useMetric', this.useMetric);
+                } catch (e) {
+                    console.error('Failed to save unit setting:', e);
+                }
                 this.updateUnitToggle();
                 this.updateUI();
             });
         });
 
         // Max HR setting
-        document.getElementById('maxHR').addEventListener('change', (e) => {
+        document.getElementById('maxHR').addEventListener('change', async (e) => {
             this.maxHR = parseInt(e.target.value) || 190;
-            db.setSetting('maxHR', this.maxHR);
+            try {
+                await db.setSetting('maxHR', this.maxHR);
+            } catch (e) {
+                console.error('Failed to save maxHR setting:', e);
+            }
             this.updateCharts();
         });
 
@@ -1270,18 +1276,57 @@ class App {
         const progressBar = document.getElementById('progressBar');
         const progressText = document.getElementById('progressText');
 
+        // Show immediate feedback
         uploadZone.style.display = 'none';
         uploadProgress.style.display = 'block';
+        progressText.textContent = `Loading file: ${file.name} (${(file.size / 1024 / 1024).toFixed(1)} MB)...`;
+        progressBar.style.width = '0%';
+
+        // Small delay to ensure UI updates on iOS
+        await new Promise(r => setTimeout(r, 100));
 
         try {
             const workouts = await appleParser.parseFile(file, (progress) => {
                 progressBar.style.width = `${progress.percent}%`;
-                progressText.textContent = `Processing... ${progress.workoutsFound} workouts found`;
+                progressText.textContent = `Processing... ${progress.workoutsFound} workouts found (${progress.percent}%)`;
             });
 
-            // Clear existing Apple Health workouts and save new ones
+            progressText.textContent = `Saving ${workouts.length} workouts...`;
+            await new Promise(r => setTimeout(r, 50));
+
+            // Clear existing Apple Health workouts
             await db.clearWorkoutsBySource('apple');
-            await db.saveWorkouts(workouts);
+
+            // On iOS, limit detailed data to prevent memory crashes
+            const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || 
+                          (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+            
+            if (isIOS) {
+                // Limit HR/cadence/stride data to 100 points per workout on iOS
+                for (const workout of workouts) {
+                    if (workout.heartRateData && workout.heartRateData.length > 100) {
+                        const step = Math.ceil(workout.heartRateData.length / 100);
+                        workout.heartRateData = workout.heartRateData.filter((_, i) => i % step === 0);
+                    }
+                    if (workout.cadenceData && workout.cadenceData.length > 100) {
+                        const step = Math.ceil(workout.cadenceData.length / 100);
+                        workout.cadenceData = workout.cadenceData.filter((_, i) => i % step === 0);
+                    }
+                    if (workout.strideLengthData && workout.strideLengthData.length > 100) {
+                        const step = Math.ceil(workout.strideLengthData.length / 100);
+                        workout.strideLengthData = workout.strideLengthData.filter((_, i) => i % step === 0);
+                    }
+                }
+            }
+
+            // Save workouts in batches to avoid overwhelming IndexedDB
+            const batchSize = isIOS ? 10 : 50;
+            for (let i = 0; i < workouts.length; i += batchSize) {
+                const batch = workouts.slice(i, i + batchSize);
+                await db.saveWorkouts(batch);
+                progressText.textContent = `Saving... ${Math.min(i + batchSize, workouts.length)}/${workouts.length}`;
+                await new Promise(r => setTimeout(r, isIOS ? 100 : 10));
+            }
 
             // Update local state
             this.workouts = await db.getAllWorkouts();
@@ -1302,6 +1347,11 @@ class App {
         } catch (error) {
             console.error('Error processing file:', error);
             progressText.textContent = 'Error processing file!';
+            // Reset UI after error
+            setTimeout(() => {
+                uploadZone.style.display = 'block';
+                uploadProgress.style.display = 'none';
+            }, 3000);
         }
     }
 

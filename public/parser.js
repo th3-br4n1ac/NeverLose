@@ -96,28 +96,41 @@ class AppleHealthParser {
     // Parse using FileReader API (fallback for mobile browsers)
     async parseFileReader(file) {
         const fileSize = file.size;
-        // Use smaller chunks on mobile to avoid memory issues (512KB)
+        // Use very small chunks on iOS to avoid memory crashes (256KB)
         const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || 
                       (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-        const chunkSize = isIOS ? 512 * 1024 : 1024 * 1024;
+        const chunkSize = isIOS ? 256 * 1024 : 1024 * 1024;
         
         let offset = 0;
+        // Keep only minimal buffer for incomplete XML tags (max 10KB)
         let buffer = '';
-        let recordBuffer = '';
+        const maxBufferSize = 10 * 1024;
 
         while (offset < fileSize) {
             try {
                 const chunk = await this.readChunk(file, offset, chunkSize);
                 offset += chunkSize;
 
-                buffer += chunk;
-                recordBuffer += chunk;
-
-                const workoutResult = this.extractWorkouts(buffer);
+                // Combine with leftover buffer
+                const text = buffer + chunk;
+                
+                // Extract workouts from this chunk
+                const workoutResult = this.extractWorkouts(text);
+                
+                // Extract records from this chunk  
+                this.extractRecordsStreaming(text);
+                
+                // Keep only the tail for incomplete tags (limit buffer size)
                 buffer = workoutResult.remaining;
-
-                const recordResult = this.extractRecordsStreaming(recordBuffer);
-                recordBuffer = recordResult.remaining;
+                if (buffer.length > maxBufferSize) {
+                    // Find last safe cut point (after a > character)
+                    const lastClose = buffer.lastIndexOf('>');
+                    if (lastClose > 0) {
+                        buffer = buffer.slice(lastClose + 1);
+                    } else {
+                        buffer = buffer.slice(-maxBufferSize);
+                    }
+                }
 
                 if (this.onProgress) {
                     this.onProgress({
@@ -129,19 +142,17 @@ class AppleHealthParser {
                 }
 
                 // Longer delay on iOS to allow garbage collection
-                await new Promise(r => setTimeout(r, isIOS ? 10 : 0));
+                await new Promise(r => setTimeout(r, isIOS ? 50 : 0));
             } catch (chunkError) {
                 console.error('Error reading chunk at offset', offset, chunkError);
                 throw chunkError;
             }
         }
 
-        // Process remaining buffers
+        // Process remaining buffer
         if (buffer.length > 0) {
             this.extractWorkouts(buffer);
-        }
-        if (recordBuffer.length > 0) {
-            this.extractRecordsStreaming(recordBuffer);
+            this.extractRecordsStreaming(buffer);
         }
 
         return this.finalizeWorkouts();

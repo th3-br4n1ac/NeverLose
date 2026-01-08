@@ -476,9 +476,11 @@
                 <div class="upload-zone" id="uploadZone">
                     <div class="upload-icon">📁</div>
                     <h3>Select your export.xml</h3>
-                    <p>Tap to browse files</p>
-                    <input type="file" id="fileInput" accept=".xml,text/xml,application/xml,*/*">
-                    <button class="btn btn-primary" id="selectFileBtn" style="margin-top: 1rem;">Choose File</button>
+                    <p>From your Apple Health Export folder</p>
+                    <label class="btn btn-primary" style="margin-top: 1rem; display: inline-block; cursor: pointer;">
+                        Choose File
+                        <input type="file" id="fileInput" accept="*/*" style="position: absolute; opacity: 0; width: 100%; height: 100%; left: 0; top: 0; cursor: pointer;">
+                    </label>
                 </div>
                 <div class="upload-progress" id="uploadProgress" style="display: none;">
                     <div class="progress-bar-container">

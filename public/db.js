@@ -227,7 +227,9 @@ class Database {
     // Settings methods
     async getSetting(key, defaultValue = null) {
         const result = await this.get(STORES.SETTINGS, key);
-        return result ? result.value : defaultValue;
+        // Check if result exists (not undefined/null), then return its value
+        // This properly handles false/0 values
+        return result !== undefined && result !== null ? result.value : defaultValue;
     }
 
     async setSetting(key, value) {
