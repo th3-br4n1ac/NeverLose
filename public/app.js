@@ -2426,13 +2426,16 @@ class App {
             return dateB - dateA;
         });
 
-        list.innerHTML = sorted.map(w => {
+        list.innerHTML = sorted.map((w, idx) => {
             const d = w.dateObj || new Date(w.date);
             const dateStr = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
             const distanceKm = w.distanceKm || 0;
             const distance = this.useMetric ? distanceKm : distanceKm / 1.60934;
             const unit = this.useMetric ? 'km' : 'mi';
             const isSelected = this.selectedComparisonWorkouts.some(sw => sw.id === w.id);
+            
+            // Generate route shape preview
+            const routeShapeId = `routeShape_${idx}`;
             
             return `
                 <div class="comparison-workout-item" data-workout-id="${w.id}" style="
@@ -2442,31 +2445,56 @@ class App {
                     margin-bottom: 8px;
                     cursor: pointer;
                     background: ${isSelected ? 'rgba(255, 107, 53, 0.1)' : 'var(--bg-tertiary)'};
+                    display: flex;
+                    align-items: center;
+                    gap: 12px;
                 ">
-                    <label style="display: flex; align-items: center; cursor: pointer; gap: 12px;">
-                        <input type="checkbox" ${isSelected ? 'checked' : ''} style="width: 18px; height: 18px;">
-                        <div style="flex: 1;">
-                            <div style="font-weight: 500;">${dateStr}</div>
-                            <div style="font-size: 0.85rem; color: var(--text-secondary);">
-                                ${distance.toFixed(2)} ${unit} • ${w.durationFormatted || '--:--'} • ${w.name || 'Running'}
-                            </div>
+                    <input type="checkbox" ${isSelected ? 'checked' : ''} data-workout-id="${w.id}" style="width: 18px; height: 18px; cursor: pointer; flex-shrink: 0;">
+                    <div style="flex: 1; min-width: 0;">
+                        <div style="font-weight: 500;">${dateStr}</div>
+                        <div style="font-size: 0.85rem; color: var(--text-secondary);">
+                            ${distance.toFixed(2)} ${unit} • ${w.durationFormatted || '--:--'} • ${w.name || 'Running'}
                         </div>
-                    </label>
+                    </div>
+                    <canvas id="${routeShapeId}" width="80" height="50" style="
+                        border-radius: 4px;
+                        background: var(--bg-secondary);
+                        border: 1px solid var(--border-color);
+                        flex-shrink: 0;
+                        pointer-events: none;
+                    "></canvas>
                 </div>
             `;
         }).join('');
 
-        // Add click handlers
-        list.querySelectorAll('.comparison-workout-item').forEach(item => {
+        // Draw route shapes and add click handlers
+        list.querySelectorAll('.comparison-workout-item').forEach((item, idx) => {
+            const workoutId = item.dataset.workoutId;
+            const workout = sorted.find(w => w.id === workoutId);
+            
+            // Draw route shape preview
+            const canvas = item.querySelector('canvas');
+            if (canvas) {
+                this.drawRouteShape(canvas, workout);
+            }
+            
+            // Add click handler to the entire item
+            const checkbox = item.querySelector('input[type="checkbox"]');
+            
+            // Handle clicks on the item itself (but not on checkbox)
             item.addEventListener('click', (e) => {
-                if (e.target.type !== 'checkbox') {
-                    const checkbox = item.querySelector('input[type="checkbox"]');
-                    checkbox.checked = !checkbox.checked;
+                // If clicking directly on checkbox, let it handle itself
+                if (e.target === checkbox || e.target.type === 'checkbox') {
+                    return;
                 }
-                const workoutId = item.dataset.workoutId;
-                const workout = sorted.find(w => w.id === workoutId);
                 
-                if (workout && item.querySelector('input[type="checkbox"]').checked) {
+                // Toggle checkbox when clicking anywhere else on the item
+                e.preventDefault();
+                checkbox.checked = !checkbox.checked;
+                
+                // Update selection
+                const isChecked = checkbox.checked;
+                if (isChecked) {
                     if (!this.selectedComparisonWorkouts.some(w => w.id === workoutId)) {
                         this.selectedComparisonWorkouts.push(workout);
                     }
@@ -2475,8 +2503,23 @@ class App {
                 }
                 
                 // Update visual state
-                const isSelected = this.selectedComparisonWorkouts.some(sw => sw.id === workoutId);
-                item.style.background = isSelected ? 'rgba(255, 107, 53, 0.1)' : 'var(--bg-tertiary)';
+                item.style.background = isChecked ? 'rgba(255, 107, 53, 0.1)' : 'var(--bg-tertiary)';
+            });
+            
+            // Handle checkbox changes
+            checkbox.addEventListener('change', (e) => {
+                const isChecked = checkbox.checked;
+                
+                if (isChecked) {
+                    if (!this.selectedComparisonWorkouts.some(w => w.id === workoutId)) {
+                        this.selectedComparisonWorkouts.push(workout);
+                    }
+                } else {
+                    this.selectedComparisonWorkouts = this.selectedComparisonWorkouts.filter(w => w.id !== workoutId);
+                }
+                
+                // Update visual state
+                item.style.background = isChecked ? 'rgba(255, 107, 53, 0.1)' : 'var(--bg-tertiary)';
             });
         });
 
@@ -2703,6 +2746,111 @@ class App {
         this.selectedComparisonWorkouts.forEach((workout, index) => {
             this.createComparisonRouteMap(workout, index);
         });
+    }
+
+    // Draw route shape preview on canvas
+    drawRouteShape(canvas, workout) {
+        if (!canvas) return;
+        
+        // Find matching route
+        let matchingRoute = workout.matchingRoute;
+        
+        if (!matchingRoute) {
+            const workoutTime = (workout.dateObj || new Date(workout.date)).getTime();
+            matchingRoute = this.routes.find(r => {
+                if (!r.startTime || !r.points || r.points.length === 0) return false;
+                const routeStart = r.startTime instanceof Date ? r.startTime.getTime() : new Date(r.startTime).getTime();
+                const timeDiff = Math.abs(routeStart - workoutTime);
+                return timeDiff < 5 * 60 * 1000; // 5 minutes tolerance
+            });
+        }
+
+        if (!matchingRoute || !matchingRoute.points || matchingRoute.points.length === 0) {
+            // Draw placeholder
+            const ctx = canvas.getContext('2d');
+            ctx.fillStyle = '#606070';
+            ctx.font = '10px Outfit';
+            ctx.textAlign = 'center';
+            ctx.fillText('No route', canvas.width / 2, canvas.height / 2);
+            return;
+        }
+
+        const ctx = canvas.getContext('2d');
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        
+        // Calculate bounds of route points
+        const points = matchingRoute.points;
+        let minLat = Infinity, maxLat = -Infinity;
+        let minLon = Infinity, maxLon = -Infinity;
+        
+        points.forEach(p => {
+            if (p.lat < minLat) minLat = p.lat;
+            if (p.lat > maxLat) maxLat = p.lat;
+            if (p.lon < minLon) minLon = p.lon;
+            if (p.lon > maxLon) maxLon = p.lon;
+        });
+        
+        const latRange = maxLat - minLat;
+        const lonRange = maxLon - minLon;
+        
+        // Add padding
+        const padding = Math.max(latRange, lonRange) * 0.1;
+        const paddedLatRange = latRange + padding * 2;
+        const paddedLonRange = lonRange + padding * 2;
+        
+        // Calculate scale to fit canvas (accounting for aspect ratio)
+        const canvasAspect = canvas.width / canvas.height;
+        const routeAspect = paddedLonRange / paddedLatRange;
+        
+        let scaleX, scaleY;
+        if (routeAspect > canvasAspect) {
+            scaleX = (canvas.width - 4) / paddedLonRange;
+            scaleY = scaleX;
+        } else {
+            scaleY = (canvas.height - 4) / paddedLatRange;
+            scaleX = scaleY;
+        }
+        
+        // Draw route line
+        ctx.strokeStyle = '#ff6b35';
+        ctx.lineWidth = 2;
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        ctx.beginPath();
+        
+        points.forEach((p, idx) => {
+            const x = ((p.lon - minLon + padding) * scaleX) + 2;
+            const y = canvas.height - ((p.lat - minLat + padding) * scaleY) - 2; // Flip Y axis
+            
+            if (idx === 0) {
+                ctx.moveTo(x, y);
+            } else {
+                ctx.lineTo(x, y);
+            }
+        });
+        
+        ctx.stroke();
+        
+        // Draw start marker (green dot)
+        if (points.length > 0) {
+            const startX = ((points[0].lon - minLon + padding) * scaleX) + 2;
+            const startY = canvas.height - ((points[0].lat - minLat + padding) * scaleY) - 2;
+            ctx.fillStyle = '#22c55e';
+            ctx.beginPath();
+            ctx.arc(startX, startY, 3, 0, Math.PI * 2);
+            ctx.fill();
+        }
+        
+        // Draw end marker (red dot)
+        if (points.length > 1) {
+            const endP = points[points.length - 1];
+            const endX = ((endP.lon - minLon + padding) * scaleX) + 2;
+            const endY = canvas.height - ((endP.lat - minLat + padding) * scaleY) - 2;
+            ctx.fillStyle = '#ef4444';
+            ctx.beginPath();
+            ctx.arc(endX, endY, 3, 0, Math.PI * 2);
+            ctx.fill();
+        }
     }
 
     // Create route map for comparison view
