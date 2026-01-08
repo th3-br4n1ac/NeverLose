@@ -92,6 +92,12 @@ class App {
         // Update UI
         this.updateUI();
 
+        // Restore last viewed page from localStorage
+        const savedPage = localStorage.getItem('currentPage');
+        if (savedPage && ['dashboard', 'analytics', 'calendar', 'workouts', 'routes'].includes(savedPage)) {
+            this.navigateTo(savedPage);
+        }
+
         // If Strava is connected, handle auto-sync
         if (strava.isConnected()) {
             this.updateStravaStatus();
@@ -450,10 +456,18 @@ class App {
             const modalTitle = document.getElementById('plannedModalTitle');
             const deleteBtn = document.getElementById('deletePlannedWorkout');
 
+            // Update distance unit label
+            const unit = this.useMetric ? 'km' : 'mi';
+            document.getElementById('plannedDistanceUnit').textContent = unit;
+
             if (planned) {
                 modalTitle.textContent = 'Edit Planned Workout';
                 document.getElementById('plannedType').value = planned.type;
-                document.getElementById('plannedDistance').value = planned.distance || '';
+                // Convert distance from km (stored) to display unit
+                const displayDistance = planned.distance 
+                    ? (this.useMetric ? planned.distance : planned.distance / 1.60934).toFixed(1)
+                    : '';
+                document.getElementById('plannedDistance').value = displayDistance;
                 document.getElementById('plannedNotes').value = planned.notes || '';
                 deleteBtn.style.display = 'block';
                 deleteBtn.dataset.date = dateStr;
@@ -1255,6 +1269,9 @@ class App {
             p.classList.toggle('active', p.id === `page-${page}`);
         });
 
+        // Save current page to localStorage for persistence across refreshes
+        localStorage.setItem('currentPage', page);
+
         // Update page-specific content
         if (page === 'analytics') {
             this.updateCharts();
@@ -1777,10 +1794,11 @@ class App {
 
         const unit = this.useMetric ? 'km' : 'mi';
 
-        tbody.innerHTML = pageData.map(w => {
+        tbody.innerHTML = pageData.map((w, idx) => {
             const d = w.dateObj || new Date(w.date);
             const distance = this.useMetric ? w.distanceKm : w.distanceMi;
             const pace = w.pace ? (this.useMetric ? w.pace : w.pace * 1.60934) : null;
+            const workoutIndex = start + idx;
 
             let hrDisplay = '--';
             if (w.heartRateAvg) {
@@ -1791,7 +1809,7 @@ class App {
             }
 
             return `
-                <tr>
+                <tr class="workout-row" data-workout-index="${workoutIndex}" style="cursor: pointer;">
                     <td>
                         <div style="font-weight: 500">${d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</div>
                         <div style="font-size: 0.85rem; color: var(--text-muted)">${d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}</div>
@@ -1808,6 +1826,18 @@ class App {
                 </tr>
             `;
         }).join('');
+
+        // Add click handlers to workout rows
+        tbody.querySelectorAll('.workout-row').forEach(row => {
+            row.addEventListener('click', () => {
+                const index = parseInt(row.dataset.workoutIndex);
+                const workout = this.filteredWorkouts[index];
+                if (workout) {
+                    const date = workout.dateObj || new Date(workout.date);
+                    this.showWorkoutDetail(workout, date);
+                }
+            });
+        });
 
         this.renderPagination();
     }
@@ -1866,8 +1896,11 @@ class App {
     async savePlannedWorkout() {
         const date = document.getElementById('plannedDate').value;
         const type = document.getElementById('plannedType').value;
-        const distance = parseFloat(document.getElementById('plannedDistance').value) || 0;
+        const inputDistance = parseFloat(document.getElementById('plannedDistance').value) || 0;
         const notes = document.getElementById('plannedNotes').value;
+
+        // Convert distance to km for storage (always store in km)
+        const distance = this.useMetric ? inputDistance : inputDistance * 1.60934;
 
         const workout = {
             id: `planned_${date}`,
@@ -1937,11 +1970,14 @@ class App {
                     continue;
                 }
 
+                // Convert distance to km for storage (CSV values are assumed to be in user's current unit)
+                const distanceKm = this.useMetric ? distance : distance * 1.60934;
+                
                 workouts.push({
                     id: `planned_${date}`,
                     date,
                     type,
-                    distance,
+                    distance: distanceKm,
                     notes
                 });
             }
@@ -2007,6 +2043,7 @@ class App {
 
     // Download CSV template
     // Load the default training plan into the database
+    // Note: DEFAULT_TRAINING_PLAN distances are in MILES - store as-is since we track unit preference
     async loadDefaultPlan() {
         if (typeof DEFAULT_TRAINING_PLAN === 'undefined') {
             console.warn('Default training plan not available');
@@ -2015,11 +2052,13 @@ class App {
 
         console.log(`Loading default training plan with ${DEFAULT_TRAINING_PLAN.length} workouts...`);
 
+        // Default plan is in miles - store in km for consistency (internal storage is always km)
         const workouts = DEFAULT_TRAINING_PLAN.map(w => ({
             id: `planned_${w.date}`,
             date: w.date,
             type: w.type,
-            distance: w.distance || 0,
+            // Store in km (convert from miles)
+            distance: w.distance ? w.distance * 1.60934 : 0,
             notes: w.notes || ''
         }));
 
@@ -2140,8 +2179,97 @@ class App {
         // Create stride length chart (if we have detailed data)
         this.createStrideDetailChart(mergedWorkout);
 
+        // Show route map if available
+        this.showDetailRouteMap(mergedWorkout);
+
         // Show modal
         document.getElementById('workoutDetailModal').classList.add('active');
+    }
+
+    // Show route map in workout detail modal
+    showDetailRouteMap(workout) {
+        const routeSection = document.getElementById('detailRouteSection');
+        const mapContainer = document.getElementById('detailRouteMap');
+        const statsContainer = document.getElementById('detailRouteStats');
+
+        // Find matching route
+        const workoutTime = (workout.dateObj || new Date(workout.date)).getTime();
+        const matchingRoute = workout.matchingRoute || this.routes.find(r => {
+            if (!r.startTime) return false;
+            const routeStart = new Date(r.startTime).getTime();
+            return Math.abs(routeStart - workoutTime) < 5 * 60 * 1000;
+        });
+
+        if (!matchingRoute || !matchingRoute.points || matchingRoute.points.length === 0) {
+            routeSection.style.display = 'none';
+            return;
+        }
+
+        routeSection.style.display = 'block';
+
+        // Clean up previous map if exists
+        if (this.detailMap) {
+            this.detailMap.remove();
+            this.detailMap = null;
+        }
+
+        // Create new map
+        this.detailMap = L.map(mapContainer).setView([0, 0], 13);
+        L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+            attribution: '&copy; OpenStreetMap contributors &copy; CARTO'
+        }).addTo(this.detailMap);
+
+        // Create route line
+        const coordinates = matchingRoute.points.map(p => [p.lat, p.lon]);
+        const routeLine = L.polyline(coordinates, {
+            color: '#ff6b35',
+            weight: 4,
+            opacity: 0.9
+        }).addTo(this.detailMap);
+
+        // Add start/end markers
+        if (coordinates.length > 0) {
+            L.marker(coordinates[0], {
+                icon: L.divIcon({
+                    className: 'route-marker start',
+                    html: '<div style="background: #22c55e; color: white; width: 24px; height: 24px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 12px;">S</div>',
+                    iconSize: [24, 24],
+                    iconAnchor: [12, 12]
+                })
+            }).addTo(this.detailMap);
+
+            L.marker(coordinates[coordinates.length - 1], {
+                icon: L.divIcon({
+                    className: 'route-marker end',
+                    html: '<div style="background: #ef4444; color: white; width: 24px; height: 24px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 12px;">F</div>',
+                    iconSize: [24, 24],
+                    iconAnchor: [12, 12]
+                })
+            }).addTo(this.detailMap);
+        }
+
+        // Fit map to route bounds
+        this.detailMap.fitBounds(routeLine.getBounds(), { padding: [20, 20] });
+
+        // Show route stats
+        const unit = this.useMetric ? 'km' : 'mi';
+        const distance = this.useMetric ? matchingRoute.totalDistance : matchingRoute.totalDistance / 1.60934;
+        const pace = this.useMetric ? matchingRoute.avgPace : matchingRoute.avgPace * 1.60934;
+
+        statsContainer.innerHTML = `
+            <div class="route-detail-stat">
+                <span class="stat-label">Route Distance</span>
+                <span class="stat-value">${distance.toFixed(2)} ${unit}</span>
+            </div>
+            <div class="route-detail-stat">
+                <span class="stat-label">Route Avg Pace</span>
+                <span class="stat-value">${this.formatPace(pace)}/${unit}</span>
+            </div>
+            <div class="route-detail-stat">
+                <span class="stat-label">Elevation Gain</span>
+                <span class="stat-value">${matchingRoute.elevationGain ? Math.round(matchingRoute.elevationGain) + ' m' : '--'}</span>
+            </div>
+        `;
     }
 
     // Merge workout data from Apple and Strava sources
@@ -2264,9 +2392,9 @@ class App {
         return vo2max;
     }
 
-    // Create HR zones chart
+    // Create HR zones chart for workout detail modal
     createHRZonesChart(workout) {
-        const ctx = document.getElementById('hrZonesChart');
+        const ctx = document.getElementById('detailHRZonesChart');
         if (!ctx) return;
 
         // Destroy existing chart
@@ -2352,7 +2480,8 @@ class App {
         });
 
         // Update legend
-        const legend = document.getElementById('hrZonesLegend');
+        const legend = document.getElementById('detailHRZonesLegend');
+        if (!legend) return;
         legend.innerHTML = zones.map((z, i) => `
             <div class="zone-legend-item">
                 <span class="zone-legend-color" style="background: ${z.color}"></span>
@@ -2382,34 +2511,46 @@ class App {
 
         let labels = [];
         let paceData = [];
+        const unit = this.useMetric ? 'km' : 'mi';
 
         if (matchingRoute && matchingRoute.points && matchingRoute.points.length > 0) {
-            // Use route data for pace
+            // Use route data for pace - X axis is distance
             const sampleRate = Math.max(1, Math.floor(matchingRoute.points.length / 50));
+            let cumulativeDistance = 0;
 
             for (let i = 0; i < matchingRoute.points.length; i += sampleRate) {
                 const point = matchingRoute.points[i];
-                const elapsed = (point.time - matchingRoute.points[0].time) / 60000;
-                labels.push(elapsed.toFixed(1));
+                
+                // Calculate cumulative distance
+                if (i > 0) {
+                    const prevIdx = Math.max(0, i - sampleRate);
+                    const prevPoint = matchingRoute.points[prevIdx];
+                    const segmentDist = this.calculateDistance(
+                        prevPoint.lat, prevPoint.lon, point.lat, point.lon
+                    );
+                    cumulativeDistance += segmentDist;
+                }
+                
+                const displayDist = this.useMetric ? cumulativeDistance : cumulativeDistance / 1.60934;
+                labels.push(displayDist.toFixed(2));
 
                 if (point.speed && point.speed > 0) {
                     const paceMinPerKm = (1000 / point.speed) / 60;
                     const displayPace = this.useMetric ? paceMinPerKm : paceMinPerKm * 1.60934;
-                    paceData.push(Math.min(displayPace, 15)); // Cap at 15 min/km for display
+                    paceData.push(Math.min(displayPace, 15)); // Cap at 15 min/unit for display
                 } else {
                     paceData.push(null);
                 }
             }
         } else {
-            // Show flat line at average pace
+            // Show flat line at average pace across estimated distance
             const avgPace = this.useMetric ? workout.paceMinPerKm : (workout.paceMinPerKm * 1.60934);
+            const totalDist = this.useMetric ? (workout.distanceKm || 0) : (workout.distanceMi || 0);
             for (let i = 0; i <= 10; i++) {
-                labels.push((workout.duration * i / 10).toFixed(1));
+                labels.push((totalDist * i / 10).toFixed(2));
                 paceData.push(avgPace);
             }
         }
-
-        const unit = this.useMetric ? 'km' : 'mi';
 
         this.paceDetailChartInstance = new Chart(ctx, {
             type: 'line',
@@ -2433,12 +2574,12 @@ class App {
                 },
                 scales: {
                     x: {
-                        title: { display: true, text: 'Time (min)', color: '#9ca3af' },
+                        title: { display: true, text: `Distance (${unit})`, color: '#9ca3af' },
                         grid: { color: 'rgba(255,255,255,0.1)' },
                         ticks: { color: '#9ca3af' }
                     },
                     y: {
-                        reverse: true, // Lower pace is better
+                        beginAtZero: true,
                         title: { display: true, text: `Pace (min/${unit})`, color: '#9ca3af' },
                         grid: { color: 'rgba(255,255,255,0.1)' },
                         ticks: { color: '#9ca3af' }
@@ -2446,6 +2587,18 @@ class App {
                 }
             }
         });
+    }
+
+    // Calculate distance between two lat/lon points in km (Haversine formula)
+    calculateDistance(lat1, lon1, lat2, lon2) {
+        const R = 6371; // Earth's radius in km
+        const dLat = (lat2 - lat1) * Math.PI / 180;
+        const dLon = (lon2 - lon1) * Math.PI / 180;
+        const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+                  Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+                  Math.sin(dLon / 2) * Math.sin(dLon / 2);
+        const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+        return R * c;
     }
 
     // Create HR detail chart
@@ -2460,22 +2613,50 @@ class App {
 
         let labels = [];
         let hrData = [];
+        const unit = this.useMetric ? 'km' : 'mi';
+        const maxHR = this.maxHR;
 
-        if (workout.heartRateData && workout.heartRateData.length > 0) {
-            // Use detailed HR data
+        // Try to get matching route for distance-based x-axis
+        const matchingRoute = workout.matchingRoute || this.routes.find(r => {
+            if (!r.startTime || !workout.dateObj) return false;
+            const routeStart = new Date(r.startTime).getTime();
+            const workoutStart = workout.dateObj.getTime();
+            return Math.abs(routeStart - workoutStart) < 5 * 60 * 1000;
+        });
+
+        if (workout.heartRateData && workout.heartRateData.length > 0 && matchingRoute && matchingRoute.points) {
+            // Use detailed HR data with distance-based x-axis
             const sampleRate = Math.max(1, Math.floor(workout.heartRateData.length / 100));
             const startTime = workout.heartRateData[0].time || 0;
+            const workoutDuration = workout.duration * 60 * 1000; // in ms
+            const totalDistKm = matchingRoute.totalDistance || workout.distanceKm || 0;
 
             for (let i = 0; i < workout.heartRateData.length; i += sampleRate) {
                 const hr = workout.heartRateData[i];
-                const elapsed = ((hr.time || i) - startTime) / 60000;
-                labels.push(elapsed.toFixed(1));
+                const elapsed = ((hr.time || i) - startTime);
+                // Estimate distance based on time proportion
+                const distKm = (elapsed / workoutDuration) * totalDistKm;
+                const displayDist = this.useMetric ? distKm : distKm / 1.60934;
+                labels.push(displayDist.toFixed(2));
+                hrData.push(hr.value || hr);
+            }
+        } else if (workout.heartRateData && workout.heartRateData.length > 0) {
+            // Use detailed HR data with distance estimated from workout
+            const sampleRate = Math.max(1, Math.floor(workout.heartRateData.length / 100));
+            const totalDistKm = workout.distanceKm || 0;
+
+            for (let i = 0; i < workout.heartRateData.length; i += sampleRate) {
+                const hr = workout.heartRateData[i];
+                const distKm = (i / workout.heartRateData.length) * totalDistKm;
+                const displayDist = this.useMetric ? distKm : distKm / 1.60934;
+                labels.push(displayDist.toFixed(2));
                 hrData.push(hr.value || hr);
             }
         } else if (workout.heartRateAvg) {
-            // Show flat line at average
+            // Show flat line at average across distance
+            const totalDist = this.useMetric ? (workout.distanceKm || 0) : (workout.distanceMi || 0);
             for (let i = 0; i <= 10; i++) {
-                labels.push((workout.duration * i / 10).toFixed(1));
+                labels.push((totalDist * i / 10).toFixed(2));
                 hrData.push(workout.heartRateAvg);
             }
         } else {
@@ -2485,15 +2666,18 @@ class App {
             return;
         }
 
-        // Create zone backgrounds
-        const maxHR = this.maxHR;
-        const zoneColors = {
-            z1: 'rgba(16, 185, 129, 0.2)',  // Green
-            z2: 'rgba(59, 130, 246, 0.2)',  // Blue
-            z3: 'rgba(245, 158, 11, 0.2)',  // Yellow
-            z4: 'rgba(249, 115, 22, 0.2)',  // Orange
-            z5: 'rgba(239, 68, 68, 0.2)'    // Red
+        // Function to get zone color based on HR value
+        const getZoneColor = (hr) => {
+            const percent = hr / maxHR;
+            if (percent < 0.6) return '#10b981'; // Zone 1 - Green
+            if (percent < 0.7) return '#3b82f6'; // Zone 2 - Blue
+            if (percent < 0.8) return '#f59e0b'; // Zone 3 - Yellow/Amber
+            if (percent < 0.9) return '#f97316'; // Zone 4 - Orange
+            return '#ef4444'; // Zone 5 - Red
         };
+
+        // Create segment colors based on HR zones
+        const segmentColors = hrData.map(hr => getZoneColor(hr));
 
         this.hrDetailChartInstance = new Chart(ctx, {
             type: 'line',
@@ -2502,52 +2686,34 @@ class App {
                 datasets: [{
                     label: 'Heart Rate (bpm)',
                     data: hrData,
+                    segment: {
+                        borderColor: (ctx) => {
+                            if (ctx.p0DataIndex === undefined) return '#ef4444';
+                            return getZoneColor(ctx.p0.parsed.y);
+                        }
+                    },
                     borderColor: '#ef4444',
-                    backgroundColor: 'rgba(239, 68, 68, 0.1)',
-                    fill: true,
+                    backgroundColor: 'transparent',
+                    fill: false,
                     tension: 0.3,
-                    pointRadius: 0
+                    pointRadius: 0,
+                    borderWidth: 2
                 }]
             },
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
                 plugins: {
-                    legend: { display: false },
-                    annotation: {
-                        annotations: {
-                            z2: {
-                                type: 'box',
-                                yMin: maxHR * 0.6,
-                                yMax: maxHR * 0.7,
-                                backgroundColor: zoneColors.z2,
-                                borderWidth: 0
-                            },
-                            z3: {
-                                type: 'box',
-                                yMin: maxHR * 0.7,
-                                yMax: maxHR * 0.8,
-                                backgroundColor: zoneColors.z3,
-                                borderWidth: 0
-                            },
-                            z4: {
-                                type: 'box',
-                                yMin: maxHR * 0.8,
-                                yMax: maxHR * 0.9,
-                                backgroundColor: zoneColors.z4,
-                                borderWidth: 0
-                            }
-                        }
-                    }
+                    legend: { display: false }
                 },
                 scales: {
                     x: {
-                        title: { display: true, text: 'Time (min)', color: '#9ca3af' },
+                        title: { display: true, text: `Distance (${unit})`, color: '#9ca3af' },
                         grid: { color: 'rgba(255,255,255,0.1)' },
                         ticks: { color: '#9ca3af' }
                     },
                     y: {
-                        min: Math.min(...hrData) - 10,
+                        beginAtZero: true,
                         max: Math.max(...hrData) + 10,
                         title: { display: true, text: 'Heart Rate (bpm)', color: '#9ca3af' },
                         grid: { color: 'rgba(255,255,255,0.1)' },
@@ -2570,22 +2736,25 @@ class App {
 
         let labels = [];
         let cadenceData = [];
+        const unit = this.useMetric ? 'km' : 'mi';
+        const totalDistKm = workout.distanceKm || 0;
 
         if (workout.cadenceData && workout.cadenceData.length > 0) {
-            // Use detailed cadence data
+            // Use detailed cadence data with distance-based x-axis
             const sampleRate = Math.max(1, Math.floor(workout.cadenceData.length / 100));
-            const startTime = workout.cadenceData[0].time || 0;
 
             for (let i = 0; i < workout.cadenceData.length; i += sampleRate) {
                 const c = workout.cadenceData[i];
-                const elapsed = ((c.time || i) - startTime) / 60000;
-                labels.push(elapsed.toFixed(1));
+                const distKm = (i / workout.cadenceData.length) * totalDistKm;
+                const displayDist = this.useMetric ? distKm : distKm / 1.60934;
+                labels.push(displayDist.toFixed(2));
                 cadenceData.push(c.value || c);
             }
         } else if (workout.cadenceAvg) {
-            // Show flat line at average
+            // Show flat line at average across distance
+            const totalDist = this.useMetric ? totalDistKm : (workout.distanceMi || 0);
             for (let i = 0; i <= 10; i++) {
-                labels.push((workout.duration * i / 10).toFixed(1));
+                labels.push((totalDist * i / 10).toFixed(2));
                 cadenceData.push(workout.cadenceAvg);
             }
         } else {
@@ -2617,12 +2786,12 @@ class App {
                 },
                 scales: {
                     x: {
-                        title: { display: true, text: 'Time (min)', color: '#9ca3af' },
+                        title: { display: true, text: `Distance (${unit})`, color: '#9ca3af' },
                         grid: { color: 'rgba(255,255,255,0.1)' },
                         ticks: { color: '#9ca3af' }
                     },
                     y: {
-                        min: cadenceData.length > 0 ? Math.min(...cadenceData) - 10 : 150,
+                        beginAtZero: true,
                         max: cadenceData.length > 0 ? Math.max(...cadenceData) + 10 : 200,
                         title: { display: true, text: 'Cadence (steps/min)', color: '#9ca3af' },
                         grid: { color: 'rgba(255,255,255,0.1)' },
@@ -2645,22 +2814,25 @@ class App {
 
         let labels = [];
         let strideData = [];
+        const unit = this.useMetric ? 'km' : 'mi';
+        const totalDistKm = workout.distanceKm || 0;
 
         if (workout.strideLengthData && workout.strideLengthData.length > 0) {
-            // Use detailed stride length data
+            // Use detailed stride length data with distance-based x-axis
             const sampleRate = Math.max(1, Math.floor(workout.strideLengthData.length / 100));
-            const startTime = workout.strideLengthData[0].time || 0;
 
             for (let i = 0; i < workout.strideLengthData.length; i += sampleRate) {
                 const s = workout.strideLengthData[i];
-                const elapsed = ((s.time || i) - startTime) / 60000;
-                labels.push(elapsed.toFixed(1));
+                const distKm = (i / workout.strideLengthData.length) * totalDistKm;
+                const displayDist = this.useMetric ? distKm : distKm / 1.60934;
+                labels.push(displayDist.toFixed(2));
                 strideData.push(s.value || s);
             }
         } else if (workout.strideLengthAvg) {
-            // Show flat line at average
+            // Show flat line at average across distance
+            const totalDist = this.useMetric ? totalDistKm : (workout.distanceMi || 0);
             for (let i = 0; i <= 10; i++) {
-                labels.push((workout.duration * i / 10).toFixed(1));
+                labels.push((totalDist * i / 10).toFixed(2));
                 strideData.push(workout.strideLengthAvg);
             }
         } else {
@@ -2692,12 +2864,12 @@ class App {
                 },
                 scales: {
                     x: {
-                        title: { display: true, text: 'Time (min)', color: '#9ca3af' },
+                        title: { display: true, text: `Distance (${unit})`, color: '#9ca3af' },
                         grid: { color: 'rgba(255,255,255,0.1)' },
                         ticks: { color: '#9ca3af' }
                     },
                     y: {
-                        min: strideData.length > 0 ? Math.min(...strideData) - 0.1 : 0.8,
+                        beginAtZero: true,
                         max: strideData.length > 0 ? Math.max(...strideData) + 0.1 : 1.5,
                         title: { display: true, text: 'Stride Length (m)', color: '#9ca3af' },
                         grid: { color: 'rgba(255,255,255,0.1)' },

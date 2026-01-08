@@ -683,20 +683,25 @@ select:focus {
     margin-bottom: 4px;
 }
 
-.day-workout.completed {
+.calendar-day .day-workout.completed {
     background: rgba(34, 197, 94, 0.2);
     color: var(--success);
 }
 
-.day-workout.planned {
+.calendar-day .day-workout.planned {
     background: rgba(59, 130, 246, 0.2);
     color: var(--info);
 }
 
-.day-workout.missed {
+.calendar-day .day-workout.missed {
     background: rgba(239, 68, 68, 0.2);
     color: var(--danger);
     text-decoration: line-through;
+}
+
+.calendar-day .day-workout.exceeded {
+    background: rgba(245, 158, 11, 0.2);
+    color: var(--warning);
 }
 
 /* ===== Modals ===== */
@@ -723,6 +728,7 @@ select:focus {
     max-width: 500px;
     max-height: 90vh;
     overflow-y: auto;
+    position: relative;
 }
 
 .modal-content.modal-large {
@@ -735,6 +741,11 @@ select:focus {
     align-items: center;
     padding: 20px 24px;
     border-bottom: 1px solid var(--border-color);
+    position: sticky;
+    top: 0;
+    background: var(--bg-secondary);
+    z-index: 10;
+    border-radius: 20px 20px 0 0;
 }
 
 .modal-header h2 {
@@ -901,6 +912,38 @@ select:focus {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
     gap: 12px;
+}
+
+/* Workout table row hover */
+.workout-row:hover {
+    background: var(--bg-tertiary);
+}
+
+/* Route detail stats in workout modal */
+.route-detail-stats {
+    display: flex;
+    gap: 24px;
+    margin-top: 12px;
+    flex-wrap: wrap;
+}
+
+.route-detail-stat {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.route-detail-stat .stat-label {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+}
+
+.route-detail-stat .stat-value {
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    font-family: 'JetBrains Mono', monospace;
 }
 
 .additional-stat {

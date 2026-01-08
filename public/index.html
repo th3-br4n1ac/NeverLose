@@ -527,7 +527,7 @@
                     </select>
                 </div>
                 <div class="form-group" id="distanceGroup">
-                    <label>Planned Distance (km)</label>
+                    <label>Planned Distance (<span id="plannedDistanceUnit">km</span>)</label>
                     <input type="number" id="plannedDistance" step="0.1" min="0">
                 </div>
                 <div class="form-group">
@@ -619,9 +619,9 @@
                 <div class="detail-section">
                     <h3>Heart Rate Zones</h3>
                     <div class="hr-zones-container">
-                        <canvas id="hrZonesChart" height="100"></canvas>
+                        <canvas id="detailHRZonesChart" height="100"></canvas>
                     </div>
-                    <div class="hr-zones-legend" id="hrZonesLegend"></div>
+                    <div class="hr-zones-legend" id="detailHRZonesLegend"></div>
                 </div>
 
                 <!-- Pace Chart -->
@@ -654,6 +654,13 @@
                     <div class="chart-container-small">
                         <canvas id="strideDetailChart"></canvas>
                     </div>
+                </div>
+
+                <!-- Route Map -->
+                <div class="detail-section" id="detailRouteSection" style="display: none;">
+                    <h3>Route</h3>
+                    <div id="detailRouteMap" style="height: 300px; border-radius: 12px;"></div>
+                    <div class="route-detail-stats" id="detailRouteStats"></div>
                 </div>
             </div>
         </div>
