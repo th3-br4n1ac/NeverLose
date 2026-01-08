@@ -541,16 +541,31 @@ class App {
 
         // Playback controls
         document.getElementById('playbackPlayPause').addEventListener('click', () => this.togglePlayback());
-        document.getElementById('playbackPrev').addEventListener('click', () => this.seekPlayback(-50));
-        document.getElementById('playbackNext').addEventListener('click', () => this.seekPlayback(50));
+        document.getElementById('playbackPrev').addEventListener('click', () => this.seekPlayback(-5));
+        document.getElementById('playbackNext').addEventListener('click', () => this.seekPlayback(5));
         document.getElementById('playbackSpeed').addEventListener('change', (e) => {
-            routesManager.playbackSpeed = parseInt(e.target.value);
+            const newSpeed = parseFloat(e.target.value) || 10;
+            routesManager.setPlaybackSpeed(newSpeed);
         });
         document.getElementById('playbackSlider').addEventListener('input', (e) => {
-            const percent = parseInt(e.target.value);
-            if (this.selectedRoute) {
-                const index = Math.floor((percent / 100) * this.selectedRoute.points.length);
-                routesManager.setPlaybackPosition(index);
+            const percent = parseFloat(e.target.value);
+            if (this.selectedRoute && routesManager.currentRoute) {
+                // If playing, pause first, then seek
+                const wasPlaying = routesManager.isPlaying;
+                if (wasPlaying) {
+                    routesManager.stopPlayback();
+                }
+                
+                routesManager.setPlaybackPosition(percent);
+                
+                // If was playing, resume from new position
+                if (wasPlaying) {
+                    const speedMultiplier = routesManager.currentSpeedMultiplier || 10;
+                    routesManager.startPlayback(routesManager.currentRoute, {
+                        speedMultiplier,
+                        startTime: routesManager.currentElapsedTime
+                    });
+                }
             }
         });
 
@@ -1026,23 +1041,31 @@ class App {
         document.getElementById('playbackPlayPause').textContent = '⏸️ Pause';
 
         const unit = this.useMetric ? 'km' : 'mi';
+        const speedMultiplier = parseFloat(document.getElementById('playbackSpeed').value) || 10;
+        
+        // Reset elapsed time when starting fresh playback
+        routesManager.currentElapsedTime = 0;
+        document.getElementById('playbackSlider').value = 0;
 
         routesManager.startPlayback(this.selectedRoute, {
-            speed: parseInt(document.getElementById('playbackSpeed').value),
+            speedMultiplier: speedMultiplier,
+            startTime: 0, // Always start from beginning when clicking Play
             onProgress: (progress) => {
-                const percent = (progress.index / progress.total) * 100;
+                const percent = progress.progress || (progress.index / progress.total) * 100;
                 document.getElementById('playbackSlider').value = percent;
 
                 // Convert distance based on unit preference
                 const distanceDisplay = this.useMetric ? progress.distance : progress.distance / 1.60934;
                 document.getElementById('playbackDistance').textContent =
                     `${distanceDisplay.toFixed(2)} ${unit}`;
+                
+                const elapsedTime = progress.elapsedTime || progress.elapsed;
                 document.getElementById('playbackTime').textContent =
-                    routesManager.formatDuration(progress.elapsed / 60000);
+                    routesManager.formatDuration(elapsedTime / 60000);
 
                 // Calculate current pace (convert if needed)
-                if (progress.elapsed > 0 && progress.distance > 0) {
-                    const pacePerKm = (progress.elapsed / 60000) / progress.distance;
+                if (elapsedTime > 0 && progress.distance > 0) {
+                    const pacePerKm = (elapsedTime / 60000) / progress.distance;
                     const paceDisplay = this.useMetric ? pacePerKm : pacePerKm * 1.60934;
                     document.getElementById('playbackPace').textContent =
                         `${routesManager.formatPace(paceDisplay)}/${unit}`;
@@ -1064,13 +1087,41 @@ class App {
         }
     }
 
-    // Seek playback
-    seekPlayback(delta) {
-        if (!this.selectedRoute) return;
-        const newIndex = routesManager.playbackIndex + delta;
-        routesManager.setPlaybackPosition(newIndex);
-        const percent = (newIndex / this.selectedRoute.points.length) * 100;
-        document.getElementById('playbackSlider').value = percent;
+    // Seek playback (delta is in percentage points, e.g., -5 for 5% back)
+    seekPlayback(deltaPercent) {
+        if (!this.selectedRoute || !routesManager.currentRoute) return;
+        
+        const slider = document.getElementById('playbackSlider');
+        const currentPercent = parseFloat(slider.value) || 0;
+        const newPercent = Math.max(0, Math.min(100, currentPercent + deltaPercent));
+        
+        const wasPlaying = routesManager.isPlaying;
+        if (wasPlaying) {
+            routesManager.stopPlayback();
+        }
+        
+        routesManager.setPlaybackPosition(newPercent);
+        slider.value = newPercent;
+        
+        // Update displayed stats
+        if (routesManager.currentRoute && routesManager.currentElapsedTime !== undefined) {
+            const point = routesManager.currentRoute.points[routesManager.playbackIndex];
+            const unit = this.useMetric ? 'km' : 'mi';
+            const distanceDisplay = this.useMetric ? point.cumulativeDistance : point.cumulativeDistance / 1.60934;
+            
+            document.getElementById('playbackDistance').textContent = `${distanceDisplay.toFixed(2)} ${unit}`;
+            document.getElementById('playbackTime').textContent = 
+                routesManager.formatDuration(routesManager.currentElapsedTime / 60000);
+        }
+        
+        // If was playing, resume from new position
+        if (wasPlaying) {
+            const speedMultiplier = routesManager.currentSpeedMultiplier || 10;
+            routesManager.startPlayback(routesManager.currentRoute, {
+                speedMultiplier,
+                startTime: routesManager.currentElapsedTime
+            });
+        }
     }
 
     // Open comparison mode
@@ -1801,10 +1852,22 @@ class App {
             const workoutIndex = start + idx;
 
             let hrDisplay = '--';
-            if (w.heartRateAvg) {
-                hrDisplay = `<span style="color: var(--accent-primary)">${Math.round(w.heartRateAvg)}</span>`;
-                if (w.heartRateMin || w.heartRateMax) {
-                    hrDisplay += ` <span style="color: var(--text-muted)">(${w.heartRateMin || '--'}-${w.heartRateMax || '--'})</span>`;
+            let hrAvg = w.heartRateAvg;
+            let hrMin = w.heartRateMin;
+            let hrMax = w.heartRateMax;
+            
+            // If no average HR but we have detailed HR data, calculate it
+            if (!hrAvg && w.heartRateData && w.heartRateData.length > 0) {
+                const hrValues = w.heartRateData.map(hr => typeof hr === 'object' ? hr.value : hr);
+                hrAvg = hrValues.reduce((sum, val) => sum + val, 0) / hrValues.length;
+                hrMin = Math.min(...hrValues);
+                hrMax = Math.max(...hrValues);
+            }
+            
+            if (hrAvg) {
+                hrDisplay = `<span style="color: var(--accent-primary)">${Math.round(hrAvg)}</span>`;
+                if (hrMin || hrMax) {
+                    hrDisplay += ` <span style="color: var(--text-muted)">(${Math.round(hrMin || 0)}-${Math.round(hrMax || 0)})</span>`;
                 }
             }
 
@@ -2137,8 +2200,16 @@ class App {
         document.getElementById('detailDistance').textContent = `${dist.toFixed(2)} ${unit}`;
         document.getElementById('detailDuration').textContent = this.formatDuration(mergedWorkout.duration);
         document.getElementById('detailPace').textContent = `${this.formatPace(pace)}/${unit}`;
-        document.getElementById('detailHR').textContent = mergedWorkout.heartRateAvg ?
-            `${Math.round(mergedWorkout.heartRateAvg)} bpm` : '--';
+        
+        // Calculate HR average from detailed data if needed
+        let hrAvg = mergedWorkout.heartRateAvg;
+        if (!hrAvg && mergedWorkout.heartRateData && mergedWorkout.heartRateData.length > 0) {
+            const hrValues = mergedWorkout.heartRateData.map(hr => typeof hr === 'object' ? hr.value : hr);
+            hrAvg = hrValues.reduce((sum, val) => sum + val, 0) / hrValues.length;
+        }
+        document.getElementById('detailHR').textContent = hrAvg ?
+            `${Math.round(hrAvg)} bpm` : '--';
+        
         document.getElementById('detailCalories').textContent = mergedWorkout.calories ?
             `${Math.round(mergedWorkout.calories)}` : '--';
 
@@ -2146,11 +2217,18 @@ class App {
         const vo2max = this.calculateVO2Max(mergedWorkout);
         document.getElementById('detailVO2').textContent = vo2max ? vo2max.toFixed(1) : '--';
 
-        // Additional stats
-        document.getElementById('detailMaxHR').textContent = mergedWorkout.heartRateMax ?
-            `${Math.round(mergedWorkout.heartRateMax)} bpm` : '--';
-        document.getElementById('detailMinHR').textContent = mergedWorkout.heartRateMin ?
-            `${Math.round(mergedWorkout.heartRateMin)} bpm` : '--';
+        // Additional stats - calculate min/max from detailed data if needed
+        let hrMin = mergedWorkout.heartRateMin;
+        let hrMax = mergedWorkout.heartRateMax;
+        if ((!hrMin || !hrMax) && mergedWorkout.heartRateData && mergedWorkout.heartRateData.length > 0) {
+            const hrValues = mergedWorkout.heartRateData.map(hr => typeof hr === 'object' ? hr.value : hr);
+            if (!hrMin) hrMin = Math.min(...hrValues);
+            if (!hrMax) hrMax = Math.max(...hrValues);
+        }
+        document.getElementById('detailMaxHR').textContent = hrMax ?
+            `${Math.round(hrMax)} bpm` : '--';
+        document.getElementById('detailMinHR').textContent = hrMin ?
+            `${Math.round(hrMin)} bpm` : '--';
 
         // Best pace from route data
         const bestPace = this.getBestPaceFromRoute(mergedWorkout);
@@ -2319,6 +2397,16 @@ class App {
             // Get HR data from route if available
             merged.heartRateData = merged.heartRateData || matchingRoute.heartRateData;
             merged.matchingRoute = matchingRoute;
+        }
+
+        // Calculate HR stats from detailed data if averages are missing
+        if (merged.heartRateData && merged.heartRateData.length > 0) {
+            if (!merged.heartRateAvg || !merged.heartRateMin || !merged.heartRateMax) {
+                const hrValues = merged.heartRateData.map(hr => typeof hr === 'object' ? hr.value : hr);
+                merged.heartRateAvg = merged.heartRateAvg || hrValues.reduce((sum, val) => sum + val, 0) / hrValues.length;
+                merged.heartRateMin = merged.heartRateMin || Math.min(...hrValues);
+                merged.heartRateMax = merged.heartRateMax || Math.max(...hrValues);
+            }
         }
 
         return merged;

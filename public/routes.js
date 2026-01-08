@@ -11,7 +11,9 @@ class RoutesManager {
         this.comparisonRoute = null;
         this.playbackInterval = null;
         this.playbackIndex = 0;
-        this.playbackSpeed = 50; // ms between points
+        this.playbackSpeed = 50; // ms between points (deprecated, use currentSpeedMultiplier)
+        this.currentSpeedMultiplier = 10; // Speed multiplier for time-based playback
+        this.currentElapsedTime = 0; // Current elapsed time in playback (for seeking)
         this.isPlaying = false;
         this.markers = {};
         this.polylines = {};
@@ -246,48 +248,116 @@ class RoutesManager {
         return this.markers[id];
     }
 
-    // Start playback
+    // Start playback (time-based like race mode)
     startPlayback(route, options = {}) {
         const {
-            speed = 50,
+            speedMultiplier = 10,
             onProgress = null,
-            onComplete = null
+            onComplete = null,
+            startTime = null // Optional: start from specific elapsed time (for seeking)
         } = options;
 
         this.stopPlayback();
         this.currentRoute = route;
-        this.playbackSpeed = speed;
+        this.currentSpeedMultiplier = speedMultiplier;
+        
+        // Get total duration in milliseconds
+        const duration = route.points[route.points.length - 1].time - route.points[0].time;
+        
+        // Start from stored elapsed time if resuming, or from startTime if provided, or from 0
+        let initialElapsedTime = startTime !== null ? startTime : (this.currentElapsedTime || 0);
+        initialElapsedTime = Math.max(0, Math.min(initialElapsedTime, duration));
+        
         this.playbackIndex = 0;
         this.isPlaying = true;
 
         // Create runner marker
-        const runner = this.createRunnerMarker();
-        runner.addTo(this.map);
+        const runnerIcon = L.divIcon({
+            className: 'runner-marker',
+            html: `<div class="runner-dot" style="background: #ff6b35;">1</div>`,
+            iconSize: [30, 30],
+            iconAnchor: [15, 15]
+        });
 
-        // Animate through points
+        if (this.markers['runner']) this.map.removeLayer(this.markers['runner']);
+        
+        // Find initial position based on elapsed time
+        let initialIdx = 0;
+        for (let i = 0; i < route.points.length - 1; i++) {
+            const pointTime = route.points[i].time - route.points[0].time;
+            if (pointTime >= initialElapsedTime) {
+                initialIdx = i;
+                break;
+            }
+        }
+        if (initialIdx === 0 && initialElapsedTime > 0) {
+            initialIdx = route.points.length - 1;
+        }
+        
+        this.markers['runner'] = L.marker([route.points[initialIdx].lat, route.points[initialIdx].lon], { 
+            icon: runnerIcon, 
+            zIndexOffset: 1000 
+        }).addTo(this.map);
+
+        // Create race widget for single runner
+        this.createSingleRunnerWidget();
+
+        // Track current position index
+        let idx = initialIdx;
+        let elapsedTime = initialElapsedTime;
+        
+        // Animation runs at 50ms intervals (20 fps) for smooth playback
+        const animationInterval = 50;
+        let runnerFinished = false;
+
         this.playbackInterval = setInterval(() => {
-            if (this.playbackIndex >= route.points.length) {
-                this.stopPlayback();
-                if (onComplete) onComplete();
-                return;
+            // Read speed dynamically so it can be changed during playback
+            const speedMultiplier = this.currentSpeedMultiplier || 10;
+            elapsedTime += animationInterval * speedMultiplier;
+
+            // Find position based on elapsed time
+            while (idx < route.points.length - 1) {
+                const pointTime = route.points[idx].time - route.points[0].time;
+                if (pointTime >= elapsedTime) break;
+                idx++;
             }
 
-            const point = route.points[this.playbackIndex];
-            runner.setLatLng([point.lat, point.lon]);
+            const point = route.points[idx];
+            this.markers['runner'].setLatLng([point.lat, point.lon]);
 
-            // Update progress
+            // Store elapsed time for seeking
+            this.currentElapsedTime = elapsedTime;
+            this.playbackIndex = idx;
+
+            // Update race widget
+            this.updateSingleRunnerWidget(point, route, elapsedTime);
+
+            // Check for finish
+            if (!runnerFinished && idx >= route.points.length - 1) {
+                runnerFinished = true;
+            }
+
+            const progress = Math.min((elapsedTime / duration) * 100, 100);
+
             if (onProgress) {
                 onProgress({
-                    index: this.playbackIndex,
+                    index: idx,
                     total: route.points.length,
                     point,
-                    elapsed: point.time - route.startTime,
-                    distance: point.cumulativeDistance
+                    elapsed: elapsedTime,
+                    elapsedTime,
+                    distance: point.cumulativeDistance,
+                    progress,
+                    speedMultiplier: this.currentSpeedMultiplier
                 });
             }
 
-            this.playbackIndex++;
-        }, this.playbackSpeed);
+            // Stop when finished
+            if (runnerFinished) {
+                this.stopPlayback();
+                if (onComplete) onComplete();
+            }
+        }, animationInterval);
     }
 
     // Stop playback
@@ -297,6 +367,7 @@ class RoutesManager {
             this.playbackInterval = null;
         }
         this.isPlaying = false;
+        // Keep elapsedTime for resume, but reset when starting fresh
         // Remove race widget when stopping
         this.removeRaceWidget();
     }
@@ -305,17 +376,47 @@ class RoutesManager {
     togglePlayback() {
         if (this.isPlaying) {
             this.stopPlayback();
-        } else if (this.currentRoute && this.playbackIndex < this.currentRoute.points.length) {
-            this.startPlayback(this.currentRoute, { speed: this.playbackSpeed });
+        } else if (this.currentRoute) {
+            const speedMultiplier = this.currentSpeedMultiplier || 10;
+            // Resume from stored elapsed time
+            this.startPlayback(this.currentRoute, { 
+                speedMultiplier,
+                startTime: this.currentElapsedTime || 0
+            });
         }
     }
 
-    // Set playback position
-    setPlaybackPosition(index) {
-        this.playbackIndex = Math.max(0, Math.min(index, this.currentRoute?.points.length - 1 || 0));
-        if (this.currentRoute && this.markers['runner']) {
-            const point = this.currentRoute.points[this.playbackIndex];
+    // Set playback position (by percentage 0-100)
+    setPlaybackPosition(percent) {
+        if (!this.currentRoute) return;
+        
+        const duration = this.currentRoute.points[this.currentRoute.points.length - 1].time - 
+                        this.currentRoute.points[0].time;
+        const targetElapsedTime = (percent / 100) * duration;
+        
+        // Find index for this elapsed time
+        let targetIdx = 0;
+        for (let i = 0; i < this.currentRoute.points.length - 1; i++) {
+            const pointTime = this.currentRoute.points[i].time - this.currentRoute.points[0].time;
+            if (pointTime >= targetElapsedTime) {
+                targetIdx = i;
+                break;
+            }
+        }
+        if (targetIdx === 0 && targetElapsedTime > 0) {
+            targetIdx = this.currentRoute.points.length - 1;
+        }
+        
+        this.playbackIndex = targetIdx;
+        this.currentElapsedTime = targetElapsedTime;
+        
+        // Update marker position
+        if (this.markers['runner']) {
+            const point = this.currentRoute.points[targetIdx];
             this.markers['runner'].setLatLng([point.lat, point.lon]);
+            
+            // Update widget if exists
+            this.updateSingleRunnerWidget(point, this.currentRoute, targetElapsedTime);
         }
     }
 
@@ -652,6 +753,52 @@ class RoutesManager {
         if (hr1El) hr1El.textContent = hr1 ? Math.round(hr1) : '--';
         if (pace2El) pace2El.textContent = pace2 || '--:--';
         if (hr2El) hr2El.textContent = hr2 ? Math.round(hr2) : '--';
+    }
+
+    // Create single runner widget for playback
+    createSingleRunnerWidget() {
+        this.removeRaceWidget();
+        
+        const paceUnit = this.useMetric ? '/km' : '/mi';
+        const widget = L.control({ position: 'topright' });
+        widget.onAdd = () => {
+            const div = L.DomUtil.create('div', 'race-stats-widget');
+            div.innerHTML = `
+                <div class="race-widget-runner" style="border-color: #ff6b35;">
+                    <div class="race-widget-header">
+                        <span class="race-widget-marker" style="background: #ff6b35;">1</span>
+                        <span class="race-widget-label">Runner</span>
+                    </div>
+                    <div class="race-widget-stats">
+                        <div class="race-widget-stat">
+                            <span class="race-widget-icon">⚡</span>
+                            <span id="singleRunnerPace">--:--</span>
+                            <span class="race-widget-unit" id="singleRunnerPaceUnit">${paceUnit}</span>
+                        </div>
+                        <div class="race-widget-stat">
+                            <span class="race-widget-icon">❤️</span>
+                            <span id="singleRunnerHR">--</span>
+                            <span class="race-widget-unit">bpm</span>
+                        </div>
+                    </div>
+                </div>
+            `;
+            return div;
+        };
+        widget.addTo(this.map);
+        this.raceWidget = widget;
+    }
+
+    // Update single runner widget stats
+    updateSingleRunnerWidget(point, route, elapsedTime) {
+        const pace = this.getPaceFromPoint(point);
+        const hr = this.getHeartRateAtTime(route, elapsedTime);
+        
+        const paceEl = document.getElementById('singleRunnerPace');
+        const hrEl = document.getElementById('singleRunnerHR');
+        
+        if (paceEl) paceEl.textContent = pace || '--:--';
+        if (hrEl) hrEl.textContent = hr ? Math.round(hr) : '--';
     }
 
     // Get formatted pace from a track point
