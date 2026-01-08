@@ -246,8 +246,22 @@ class App {
         // File upload
         const uploadZone = document.getElementById('uploadZone');
         const fileInput = document.getElementById('fileInput');
+        const selectFileBtn = document.getElementById('selectFileBtn');
 
-        uploadZone.addEventListener('click', () => fileInput.click());
+        // Button click for iOS compatibility
+        if (selectFileBtn) {
+            selectFileBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                fileInput.click();
+            });
+        }
+
+        uploadZone.addEventListener('click', (e) => {
+            // Don't trigger if clicking the file input or button directly
+            if (e.target !== fileInput && e.target !== selectFileBtn) {
+                fileInput.click();
+            }
+        });
         uploadZone.addEventListener('dragover', (e) => {
             e.preventDefault();
             uploadZone.classList.add('dragover');
@@ -263,7 +277,7 @@ class App {
             }
         });
         fileInput.addEventListener('change', (e) => {
-            if (e.target.files.length > 0) {
+            if (e.target.files && e.target.files.length > 0) {
                 this.handleFileUpload(e.target.files[0]);
             }
         });
@@ -1959,7 +1973,7 @@ class App {
             notes: w.notes || ''
         }));
 
-        await db.bulkPutPlannedWorkouts(workouts);
+        await db.savePlannedWorkouts(workouts);
         this.plannedWorkouts = await db.getAllPlannedWorkouts();
 
         console.log(`Loaded ${this.plannedWorkouts.length} planned workouts`);

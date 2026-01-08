@@ -475,9 +475,10 @@
             <div class="modal-body">
                 <div class="upload-zone" id="uploadZone">
                     <div class="upload-icon">📁</div>
-                    <h3>Drop your export.xml here</h3>
-                    <p>or click to browse</p>
-                    <input type="file" id="fileInput" accept=".xml" hidden>
+                    <h3>Select your export.xml</h3>
+                    <p>Tap to browse files</p>
+                    <input type="file" id="fileInput" accept=".xml,text/xml,application/xml,*/*">
+                    <button class="btn btn-primary" id="selectFileBtn" style="margin-top: 1rem;">Choose File</button>
                 </div>
                 <div class="upload-progress" id="uploadProgress" style="display: none;">
                     <div class="progress-bar-container">

@@ -27,11 +27,15 @@ class AppleHealthParser {
         this.strideLengthRecordsSeen = new Set();
         this.onProgress = onProgress;
 
-        // Check if Streams API is available (not supported on some mobile browsers)
-        if (typeof file.stream === 'function') {
-            return this.parseFileStream(file);
-        } else {
+        // Detect iOS - always use FileReader on iOS due to memory/streaming issues
+        const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || 
+                      (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+        
+        // Use FileReader on iOS or when Streams API is not available
+        if (isIOS || typeof file.stream !== 'function') {
             return this.parseFileReader(file);
+        } else {
+            return this.parseFileStream(file);
         }
     }
 
@@ -92,34 +96,44 @@ class AppleHealthParser {
     // Parse using FileReader API (fallback for mobile browsers)
     async parseFileReader(file) {
         const fileSize = file.size;
-        const chunkSize = 1024 * 1024; // 1MB chunks
+        // Use smaller chunks on mobile to avoid memory issues (512KB)
+        const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || 
+                      (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+        const chunkSize = isIOS ? 512 * 1024 : 1024 * 1024;
+        
         let offset = 0;
         let buffer = '';
         let recordBuffer = '';
 
         while (offset < fileSize) {
-            const chunk = await this.readChunk(file, offset, chunkSize);
-            offset += chunkSize;
+            try {
+                const chunk = await this.readChunk(file, offset, chunkSize);
+                offset += chunkSize;
 
-            buffer += chunk;
-            recordBuffer += chunk;
+                buffer += chunk;
+                recordBuffer += chunk;
 
-            const workoutResult = this.extractWorkouts(buffer);
-            buffer = workoutResult.remaining;
+                const workoutResult = this.extractWorkouts(buffer);
+                buffer = workoutResult.remaining;
 
-            const recordResult = this.extractRecordsStreaming(recordBuffer);
-            recordBuffer = recordResult.remaining;
+                const recordResult = this.extractRecordsStreaming(recordBuffer);
+                recordBuffer = recordResult.remaining;
 
-            if (this.onProgress) {
-                this.onProgress({
-                    percent: Math.round((Math.min(offset, fileSize) / fileSize) * 100),
-                    bytesRead: Math.min(offset, fileSize),
-                    fileSize,
-                    workoutsFound: this.workouts.length
-                });
+                if (this.onProgress) {
+                    this.onProgress({
+                        percent: Math.round((Math.min(offset, fileSize) / fileSize) * 100),
+                        bytesRead: Math.min(offset, fileSize),
+                        fileSize,
+                        workoutsFound: this.workouts.length
+                    });
+                }
+
+                // Longer delay on iOS to allow garbage collection
+                await new Promise(r => setTimeout(r, isIOS ? 10 : 0));
+            } catch (chunkError) {
+                console.error('Error reading chunk at offset', offset, chunkError);
+                throw chunkError;
             }
-
-            await new Promise(r => setTimeout(r, 0));
         }
 
         // Process remaining buffers
