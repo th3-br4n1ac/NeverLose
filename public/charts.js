@@ -438,6 +438,443 @@ class ChartManager {
         this.createVolumeChart('volumeChart', workouts);
         this.createDayDistributionChart('dayDistributionChart', workouts);
     }
+
+    // Create comparison chart with overlayed data for selected metric
+    createComparisonChart(canvasId, workouts, metric, useMetric = true, maxHR = 190) {
+        this.destroyChart(canvasId);
+        
+        switch(metric) {
+            case 'heartrate':
+                this.createComparisonHRChart(canvasId, workouts, useMetric, maxHR);
+                break;
+            case 'pace':
+                this.createComparisonPaceChart(canvasId, workouts, useMetric);
+                break;
+            case 'cadence':
+                this.createComparisonCadenceChart(canvasId, workouts);
+                break;
+            case 'stride':
+                this.createComparisonStrideChart(canvasId, workouts, useMetric);
+                break;
+        }
+    }
+
+    // Helper: Normalize workout data by actual distance (in km or miles)
+    normalizeByDistance(workout, dataField, useMetric = true) {
+        const data = workout[dataField];
+        if (!data || !Array.isArray(data) || data.length === 0) return null;
+        
+        const totalDistanceKm = workout.distanceKm || 0;
+        if (totalDistanceKm === 0) return null;
+
+        const totalDistance = useMetric ? totalDistanceKm : totalDistanceKm / 1.60934;
+        const workoutStartTime = workout.dateObj ? workout.dateObj.getTime() : new Date(workout.date).getTime();
+        const workoutDuration = workout.duration ? workout.duration * 60 * 1000 : 0; // duration in minutes, convert to ms
+        
+        let normalized = [];
+
+        // Check if data points have timestamps
+        const hasTimestamps = data.length > 0 && typeof data[0] === 'object' && data[0].time !== undefined;
+        
+        if (hasTimestamps && workoutDuration > 0) {
+            // Find min and max timestamps to handle relative timestamps
+            let minTime = Infinity;
+            let maxTime = -Infinity;
+            data.forEach(point => {
+                const t = point.time;
+                if (t < minTime) minTime = t;
+                if (t > maxTime) maxTime = t;
+            });
+            
+            // Calculate actual time span
+            const timeSpan = maxTime - minTime;
+            
+            // Use time span if it's reasonable (within 2x of workout duration), otherwise use workout duration
+            const effectiveDuration = (timeSpan > 0 && timeSpan < workoutDuration * 2) ? timeSpan : workoutDuration;
+            
+            // Data is time-based, map to distance using elapsed time proportion
+            data.forEach((point) => {
+                const timestamp = point.time;
+                // Try absolute time first, fallback to relative
+                let elapsedMs = timestamp - workoutStartTime;
+                
+                // If elapsed time seems wrong (negative or way too large), use relative time from first point
+                if (elapsedMs < 0 || elapsedMs > workoutDuration * 3) {
+                    elapsedMs = timestamp - minTime;
+                }
+                
+                const timePercent = effectiveDuration > 0 ? elapsedMs / effectiveDuration : 0;
+                
+                // Convert time percentage to actual distance
+                const distance = Math.max(0, Math.min(totalDistance, timePercent * totalDistance));
+                const value = point.value !== undefined ? point.value : point;
+                normalized.push({ x: distance, y: value });
+            });
+        } else {
+            // Fallback: assume uniform distribution across distance
+            const step = totalDistance / data.length;
+            data.forEach((point, idx) => {
+                const value = typeof point === 'object' ? (point.value !== undefined ? point.value : point) : point;
+                // Distribute evenly across distance
+                const distance = idx < data.length - 1 ? idx * step + (step / 2) : totalDistance - (step / 2);
+                normalized.push({ x: distance, y: value });
+            });
+        }
+
+        // Sort by x (distance) to ensure proper line drawing
+        normalized.sort((a, b) => a.x - b.x);
+        
+        // Ensure we have points at 0 and total distance for better visualization
+        if (normalized.length > 0) {
+            if (normalized[0].x > 0.01) {
+                normalized.unshift({ x: 0, y: normalized[0].y });
+            }
+            const lastX = normalized[normalized.length - 1].x;
+            if (lastX < totalDistance - 0.01) {
+                normalized.push({ x: totalDistance, y: normalized[normalized.length - 1].y });
+            }
+        }
+
+        return normalized.length > 0 ? normalized : null;
+    }
+
+    // Create comparison HR chart
+    createComparisonHRChart(canvasId, workouts, useMetric, maxHR) {
+        const canvas = document.getElementById(canvasId);
+        if (!canvas) return;
+
+        const colors = ['#ff6b35', '#3b82f6', '#22c55e', '#f59e0b', '#a855f7'];
+        const datasets = [];
+
+        workouts.forEach((workout, index) => {
+            const hrData = this.normalizeByDistance(workout, 'heartRateData', useMetric);
+            if (hrData && hrData.length > 0) {
+                const d = workout.dateObj || new Date(workout.date);
+                const dateStr = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+                const distanceKm = workout.distanceKm || 0;
+                const distance = useMetric ? distanceKm : distanceKm / 1.60934;
+                const unit = useMetric ? 'km' : 'mi';
+                
+                datasets.push({
+                    label: `${dateStr} - ${distance.toFixed(1)}${unit}`,
+                    data: hrData,
+                    borderColor: colors[index % colors.length],
+                    backgroundColor: colors[index % colors.length] + '20',
+                    fill: false,
+                    tension: 0.3,
+                    pointRadius: 0,
+                    borderWidth: 2
+                });
+            }
+        });
+
+        if (datasets.length === 0) return;
+
+        this.charts[canvasId] = new Chart(canvas.getContext('2d'), {
+            type: 'line',
+            data: { datasets },
+            options: {
+                ...this.defaultOptions,
+                plugins: {
+                    ...this.defaultOptions.plugins,
+                    legend: {
+                        display: true,
+                        position: 'top',
+                        labels: { color: '#a0a0b0', font: { family: 'Outfit', size: 11 } }
+                    },
+                    tooltip: {
+                        callbacks: {
+                            label: (ctx) => `${ctx.dataset.label}: ${Math.round(ctx.parsed.y)} bpm`
+                        }
+                    }
+                },
+                scales: {
+                    x: {
+                        ...this.defaultOptions.scales.x,
+                        type: 'linear',
+                        title: { display: true, text: `Distance (${useMetric ? 'km' : 'mi'})`, color: '#a0a0b0' },
+                        min: 0,
+                        ticks: {
+                            callback: function(value) {
+                                return value.toFixed(1);
+                            }
+                        }
+                    },
+                    y: {
+                        ...this.defaultOptions.scales.y,
+                        title: { display: true, text: 'Heart Rate (bpm)', color: '#a0a0b0' },
+                        min: 0,
+                        max: maxHR
+                    }
+                }
+            }
+        });
+    }
+
+    // Create comparison pace chart
+    createComparisonPaceChart(canvasId, workouts, useMetric) {
+        const canvas = document.getElementById(canvasId);
+        if (!canvas) return;
+
+        const colors = ['#ff6b35', '#3b82f6', '#22c55e', '#f59e0b', '#a855f7'];
+        const datasets = [];
+
+        workouts.forEach((workout, index) => {
+            // Calculate pace over distance from route points if available
+            let paceData = null;
+            if (workout.matchingRoute && workout.matchingRoute.points) {
+                const route = workout.matchingRoute;
+                const totalDistance = route.totalDistance || workout.distanceKm || 0;
+                if (totalDistance > 0) {
+                    paceData = [];
+                    let cumulativeDistance = 0;
+                    const distancePerPoint = totalDistance / route.points.length;
+                    
+                    route.points.forEach((point, idx) => {
+                        if (point.speed && point.speed > 0) {
+                            cumulativeDistance += distancePerPoint;
+                            // Convert to display unit (km or miles)
+                            const displayDistance = useMetric ? cumulativeDistance : cumulativeDistance / 1.60934;
+                            const paceMinPerKm = 60 / point.speed; // Convert m/s to min/km
+                            const pace = useMetric ? paceMinPerKm : paceMinPerKm * 1.60934;
+                            paceData.push({ x: displayDistance, y: pace });
+                        }
+                    });
+                }
+            }
+
+            if (!paceData || paceData.length === 0) {
+                // Fallback: create constant pace line
+                const pace = workout.pace || workout.paceMinPerKm || (workout.duration && workout.distanceKm ? workout.duration / workout.distanceKm : 0);
+                if (pace > 0) {
+                    const displayPace = useMetric ? pace : pace * 1.60934;
+                    const totalDistanceKm = workout.distanceKm || 0;
+                    const totalDistance = useMetric ? totalDistanceKm : totalDistanceKm / 1.60934;
+                    paceData = [
+                        { x: 0, y: displayPace },
+                        { x: totalDistance, y: displayPace }
+                    ];
+                }
+            }
+
+            if (paceData && paceData.length > 0) {
+                const d = workout.dateObj || new Date(workout.date);
+                const dateStr = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+                const distanceKm = workout.distanceKm || 0;
+                const distance = useMetric ? distanceKm : distanceKm / 1.60934;
+                const unit = useMetric ? 'km' : 'mi';
+                
+                datasets.push({
+                    label: `${dateStr} - ${distance.toFixed(1)}${unit}`,
+                    data: paceData,
+                    borderColor: colors[index % colors.length],
+                    backgroundColor: colors[index % colors.length] + '20',
+                    fill: false,
+                    tension: 0.3,
+                    pointRadius: 0,
+                    borderWidth: 2
+                });
+            }
+        });
+
+        if (datasets.length === 0) return;
+
+        this.charts[canvasId] = new Chart(canvas.getContext('2d'), {
+            type: 'line',
+            data: { datasets },
+            options: {
+                ...this.defaultOptions,
+                plugins: {
+                    ...this.defaultOptions.plugins,
+                    legend: {
+                        display: true,
+                        position: 'top',
+                        labels: { color: '#a0a0b0', font: { family: 'Outfit', size: 11 } }
+                    },
+                    tooltip: {
+                        callbacks: {
+                            label: (ctx) => `${ctx.dataset.label}: ${this.formatPace(ctx.parsed.y)}/${useMetric ? 'km' : 'mi'}`
+                        }
+                    }
+                },
+                scales: {
+                    x: {
+                        ...this.defaultOptions.scales.x,
+                        type: 'linear',
+                        title: { display: true, text: `Distance (${useMetric ? 'km' : 'mi'})`, color: '#a0a0b0' },
+                        min: 0,
+                        ticks: {
+                            callback: function(value) {
+                                return value.toFixed(1);
+                            }
+                        }
+                    },
+                    y: {
+                        ...this.defaultOptions.scales.y,
+                        title: { display: true, text: `Pace (${useMetric ? 'min/km' : 'min/mi'})`, color: '#a0a0b0' },
+                        reverse: true,
+                        ticks: {
+                            color: '#606070',
+                            callback: (val) => this.formatPace(val)
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    // Create comparison cadence chart
+    createComparisonCadenceChart(canvasId, workouts, useMetric = true) {
+        const canvas = document.getElementById(canvasId);
+        if (!canvas) return;
+
+        const colors = ['#ff6b35', '#3b82f6', '#22c55e', '#f59e0b', '#a855f7'];
+        const datasets = [];
+
+        workouts.forEach((workout, index) => {
+            const cadenceData = this.normalizeByDistance(workout, 'cadenceData', true); // Always use km for normalization
+            if (cadenceData && cadenceData.length > 0) {
+                const d = workout.dateObj || new Date(workout.date);
+                const dateStr = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+                const distanceKm = workout.distanceKm || 0;
+                const distance = useMetric ? distanceKm : distanceKm / 1.60934;
+                const unit = useMetric ? 'km' : 'mi';
+                
+                // Convert cadenceData x values to use selected unit
+                const cadenceDataConverted = cadenceData.map(point => ({
+                    x: useMetric ? point.x : point.x / 1.60934,
+                    y: point.y
+                }));
+                
+                datasets.push({
+                    label: `${dateStr} - ${distance.toFixed(1)}${unit}`,
+                    data: cadenceDataConverted,
+                    borderColor: colors[index % colors.length],
+                    backgroundColor: colors[index % colors.length] + '20',
+                    fill: false,
+                    tension: 0.3,
+                    pointRadius: 0,
+                    borderWidth: 2
+                });
+            }
+        });
+
+        if (datasets.length === 0) return;
+
+        this.charts[canvasId] = new Chart(canvas.getContext('2d'), {
+            type: 'line',
+            data: { datasets },
+            options: {
+                ...this.defaultOptions,
+                plugins: {
+                    ...this.defaultOptions.plugins,
+                    legend: {
+                        display: true,
+                        position: 'top',
+                        labels: { color: '#a0a0b0', font: { family: 'Outfit', size: 11 } }
+                    },
+                    tooltip: {
+                        callbacks: {
+                            label: (ctx) => `${ctx.dataset.label}: ${Math.round(ctx.parsed.y)} spm`
+                        }
+                    }
+                },
+                scales: {
+                    x: {
+                        ...this.defaultOptions.scales.x,
+                        type: 'linear',
+                        title: { display: true, text: `Distance (${useMetric ? 'km' : 'mi'})`, color: '#a0a0b0' },
+                        min: 0,
+                        ticks: {
+                            callback: function(value) {
+                                return value.toFixed(1);
+                            }
+                        }
+                    },
+                    y: {
+                        ...this.defaultOptions.scales.y,
+                        title: { display: true, text: 'Cadence (spm)', color: '#a0a0b0' }
+                    }
+                }
+            }
+        });
+    }
+
+    // Create comparison stride chart
+    createComparisonStrideChart(canvasId, workouts) {
+        const canvas = document.getElementById(canvasId);
+        if (!canvas) return;
+
+        const colors = ['#ff6b35', '#3b82f6', '#22c55e', '#f59e0b', '#a855f7'];
+        const datasets = [];
+
+        workouts.forEach((workout, index) => {
+            const strideData = this.normalizeByDistance(workout, 'strideLengthData');
+            if (strideData && strideData.length > 0) {
+                const d = workout.dateObj || new Date(workout.date);
+                const dateStr = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+                
+                // Convert stride from meters to centimeters for better readability
+                const strideDataCm = strideData.map(point => ({
+                    x: point.x,
+                    y: point.y * 100
+                }));
+                
+                datasets.push({
+                    label: `${dateStr} - ${workout.distanceKm ? workout.distanceKm.toFixed(1) : '--'}km`,
+                    data: strideDataCm,
+                    borderColor: colors[index % colors.length],
+                    backgroundColor: colors[index % colors.length] + '20',
+                    fill: false,
+                    tension: 0.3,
+                    pointRadius: 0,
+                    borderWidth: 2
+                });
+            }
+        });
+
+        if (datasets.length === 0) return;
+
+        this.charts[canvasId] = new Chart(canvas.getContext('2d'), {
+            type: 'line',
+            data: { datasets },
+            options: {
+                ...this.defaultOptions,
+                plugins: {
+                    ...this.defaultOptions.plugins,
+                    legend: {
+                        display: true,
+                        position: 'top',
+                        labels: { color: '#a0a0b0', font: { family: 'Outfit', size: 11 } }
+                    },
+                    tooltip: {
+                        callbacks: {
+                            label: (ctx) => `${ctx.dataset.label}: ${ctx.parsed.y.toFixed(1)} cm`
+                        }
+                    }
+                },
+                scales: {
+                    x: {
+                        ...this.defaultOptions.scales.x,
+                        type: 'linear',
+                        title: { display: true, text: 'Distance (%)', color: '#a0a0b0' },
+                        min: 0,
+                        max: 100,
+                        ticks: {
+                            stepSize: 10,
+                            callback: function(value) {
+                                return value + '%';
+                            }
+                        }
+                    },
+                    y: {
+                        ...this.defaultOptions.scales.y,
+                        title: { display: true, text: 'Stride Length (cm)', color: '#a0a0b0' }
+                    }
+                }
+            }
+        });
+    }
 }
 
 // Create global chart manager instance

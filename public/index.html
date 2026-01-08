@@ -208,13 +208,21 @@
                 <header class="page-header">
                     <h1>Analytics</h1>
                     <div class="header-actions">
-                        <select id="analyticsRange">
-                            <option value="30">Last 30 Days</option>
-                            <option value="90">Last 90 Days</option>
-                            <option value="180">Last 6 Months</option>
-                            <option value="365" selected>Last Year</option>
-                            <option value="all">All Time</option>
-                        </select>
+                        <div class="date-range-controls">
+                            <select id="analyticsRange">
+                                <option value="30">Last 30 Days</option>
+                                <option value="90">Last 90 Days</option>
+                                <option value="180">Last 6 Months</option>
+                                <option value="365" selected>Last Year</option>
+                                <option value="all">All Time</option>
+                                <option value="custom">Custom Range</option>
+                            </select>
+                            <div id="customDateRange" style="display: none; margin-left: 10px;">
+                                <input type="date" id="startDate" style="margin-right: 8px;">
+                                <span>to</span>
+                                <input type="date" id="endDate" style="margin-left: 8px;">
+                            </div>
+                        </div>
                     </div>
                 </header>
 
@@ -238,6 +246,54 @@
                     <div class="chart-card">
                         <h3>Day of Week Distribution</h3>
                         <canvas id="dayDistributionChart"></canvas>
+                    </div>
+                </div>
+
+                <!-- Run Comparison Section -->
+                <div class="comparison-section" style="margin-top: 32px;">
+                    <div class="comparison-header">
+                        <h2>Compare Runs</h2>
+                        <div class="comparison-controls">
+                            <button class="btn btn-primary" id="openComparisonModal">+ Add Runs to Compare</button>
+                            <button class="btn" id="clearComparison" style="display: none;">Clear Comparison</button>
+                        </div>
+                    </div>
+                    <div id="comparisonCharts" style="display: none;">
+                        <div style="margin-bottom: 20px;">
+                            <label for="comparisonMetric" style="margin-right: 12px; color: var(--text-secondary);">Compare:</label>
+                            <select id="comparisonMetric" style="padding: 8px 12px; border-radius: 8px; border: 1px solid var(--border-color); background: var(--bg-secondary); color: var(--text-primary); min-width: 200px;">
+                                <option value="heartrate">Heart Rate</option>
+                                <option value="pace">Pace</option>
+                                <option value="cadence">Cadence</option>
+                                <option value="stride">Stride Length</option>
+                            </select>
+                        </div>
+                        <div class="comparison-charts-grid">
+                            <div class="chart-card large">
+                                <h3 id="comparisonChartTitle">Heart Rate Comparison</h3>
+                                <canvas id="comparisonChart"></canvas>
+                            </div>
+                        </div>
+                        <div id="comparisonStats" class="comparison-stats-grid"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Comparison Modal -->
+            <div class="modal" id="comparisonModal">
+                <div class="modal-content" style="max-width: 700px;">
+                    <div class="modal-header">
+                        <h2>Select Runs to Compare</h2>
+                        <button class="modal-close" onclick="document.getElementById('comparisonModal').classList.remove('active')">&times;</button>
+                    </div>
+                    <div class="modal-body">
+                        <div class="comparison-workouts-list" id="comparisonWorkoutsList" style="max-height: 400px; overflow-y: auto;">
+                            <!-- Workouts will be populated here -->
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button class="btn" onclick="document.getElementById('comparisonModal').classList.remove('active')">Cancel</button>
+                        <button class="btn btn-primary" id="applyComparison">Compare Selected Runs</button>
                     </div>
                 </div>
             </div>

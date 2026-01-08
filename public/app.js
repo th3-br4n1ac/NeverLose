@@ -9,6 +9,8 @@ class App {
         this.filteredWorkouts = [];
         this.plannedWorkouts = [];
         this.routes = [];
+        this.selectedComparisonWorkouts = [];
+        this.comparisonMaps = []; // Store comparison map instances
         this.selectedRoute = null;
         this.comparisonMode = false;
         this.currentPage = 1;
@@ -666,7 +668,27 @@ class App {
         });
 
         // Analytics range change
-        document.getElementById('analyticsRange').addEventListener('change', () => this.updateCharts());
+        document.getElementById('analyticsRange').addEventListener('change', (e) => {
+            const range = e.target.value;
+            const customRangeDiv = document.getElementById('customDateRange');
+            if (range === 'custom') {
+                customRangeDiv.style.display = 'flex';
+                customRangeDiv.style.alignItems = 'center';
+            } else {
+                customRangeDiv.style.display = 'none';
+            }
+            this.updateCharts();
+        });
+        
+        // Custom date range inputs
+        document.getElementById('startDate')?.addEventListener('change', () => this.updateCharts());
+        document.getElementById('endDate')?.addEventListener('change', () => this.updateCharts());
+        
+        // Comparison controls
+        document.getElementById('openComparisonModal')?.addEventListener('click', () => this.openComparisonModal());
+        document.getElementById('clearComparison')?.addEventListener('click', () => this.clearComparison());
+        document.getElementById('applyComparison')?.addEventListener('click', () => this.applyComparison());
+        document.getElementById('comparisonMetric')?.addEventListener('change', () => this.updateComparisonChart());
 
         // Table sorting
         document.querySelector('.workouts-table thead').addEventListener('click', (e) => {
@@ -1486,6 +1508,17 @@ class App {
 
         // Update page-specific content
         if (page === 'analytics') {
+            // Initialize custom date range defaults if not set
+            const startDateInput = document.getElementById('startDate');
+            const endDateInput = document.getElementById('endDate');
+            if (startDateInput && !startDateInput.value) {
+                const defaultStart = new Date();
+                defaultStart.setDate(defaultStart.getDate() - 365);
+                startDateInput.value = defaultStart.toISOString().split('T')[0];
+            }
+            if (endDateInput && !endDateInput.value) {
+                endDateInput.value = new Date().toISOString().split('T')[0];
+            }
             this.updateCharts();
         } else if (page === 'calendar') {
             // Apply deduplication to calendar workouts
@@ -2345,10 +2378,27 @@ class App {
 
     // Update charts
     updateCharts() {
-        const days = parseInt(document.getElementById('analyticsRange').value) || 365;
+        const rangeSelect = document.getElementById('analyticsRange');
+        const range = rangeSelect?.value || '365';
         let filtered = this.workouts;
 
-        if (days !== 'all') {
+        if (range === 'custom') {
+            const startDate = document.getElementById('startDate')?.value;
+            const endDate = document.getElementById('endDate')?.value;
+            
+            if (startDate && endDate) {
+                const start = new Date(startDate);
+                start.setHours(0, 0, 0, 0);
+                const end = new Date(endDate);
+                end.setHours(23, 59, 59, 999);
+                
+                filtered = this.workouts.filter(w => {
+                    const d = w.dateObj || new Date(w.date);
+                    return d >= start && d <= end;
+                });
+            }
+        } else if (range !== 'all') {
+            const days = parseInt(range) || 365;
             const cutoff = new Date();
             cutoff.setDate(cutoff.getDate() - days);
             filtered = this.workouts.filter(w => {
@@ -2357,7 +2407,324 @@ class App {
             });
         }
 
+        // Use deduplicated workouts for analytics
+        filtered = this.deduplicateWorkoutsList([...filtered]);
         charts.updateAllCharts(filtered, this.useMetric, this.maxHR);
+    }
+
+    // Comparison functionality
+
+    openComparisonModal() {
+        const modal = document.getElementById('comparisonModal');
+        const list = document.getElementById('comparisonWorkoutsList');
+        
+        // Get deduplicated workouts sorted by date
+        const deduplicated = this.deduplicateWorkoutsList([...this.workouts]);
+        const sorted = deduplicated.sort((a, b) => {
+            const dateA = a.dateObj || new Date(a.date);
+            const dateB = b.dateObj || new Date(b.date);
+            return dateB - dateA;
+        });
+
+        list.innerHTML = sorted.map(w => {
+            const d = w.dateObj || new Date(w.date);
+            const dateStr = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+            const distanceKm = w.distanceKm || 0;
+            const distance = this.useMetric ? distanceKm : distanceKm / 1.60934;
+            const unit = this.useMetric ? 'km' : 'mi';
+            const isSelected = this.selectedComparisonWorkouts.some(sw => sw.id === w.id);
+            
+            return `
+                <div class="comparison-workout-item" data-workout-id="${w.id}" style="
+                    padding: 12px;
+                    border: 1px solid var(--border-color);
+                    border-radius: 8px;
+                    margin-bottom: 8px;
+                    cursor: pointer;
+                    background: ${isSelected ? 'rgba(255, 107, 53, 0.1)' : 'var(--bg-tertiary)'};
+                ">
+                    <label style="display: flex; align-items: center; cursor: pointer; gap: 12px;">
+                        <input type="checkbox" ${isSelected ? 'checked' : ''} style="width: 18px; height: 18px;">
+                        <div style="flex: 1;">
+                            <div style="font-weight: 500;">${dateStr}</div>
+                            <div style="font-size: 0.85rem; color: var(--text-secondary);">
+                                ${distance.toFixed(2)} ${unit} • ${w.durationFormatted || '--:--'} • ${w.name || 'Running'}
+                            </div>
+                        </div>
+                    </label>
+                </div>
+            `;
+        }).join('');
+
+        // Add click handlers
+        list.querySelectorAll('.comparison-workout-item').forEach(item => {
+            item.addEventListener('click', (e) => {
+                if (e.target.type !== 'checkbox') {
+                    const checkbox = item.querySelector('input[type="checkbox"]');
+                    checkbox.checked = !checkbox.checked;
+                }
+                const workoutId = item.dataset.workoutId;
+                const workout = sorted.find(w => w.id === workoutId);
+                
+                if (workout && item.querySelector('input[type="checkbox"]').checked) {
+                    if (!this.selectedComparisonWorkouts.some(w => w.id === workoutId)) {
+                        this.selectedComparisonWorkouts.push(workout);
+                    }
+                } else {
+                    this.selectedComparisonWorkouts = this.selectedComparisonWorkouts.filter(w => w.id !== workoutId);
+                }
+                
+                // Update visual state
+                const isSelected = this.selectedComparisonWorkouts.some(sw => sw.id === workoutId);
+                item.style.background = isSelected ? 'rgba(255, 107, 53, 0.1)' : 'var(--bg-tertiary)';
+            });
+        });
+
+        modal.classList.add('active');
+    }
+
+    applyComparison() {
+        if (this.selectedComparisonWorkouts.length === 0) {
+            alert('Please select at least one run to compare.');
+            return;
+        }
+
+        if (this.selectedComparisonWorkouts.length > 5) {
+            alert('Please select no more than 5 runs to compare for best visualization.');
+            this.selectedComparisonWorkouts = this.selectedComparisonWorkouts.slice(0, 5);
+        }
+
+        document.getElementById('comparisonModal').classList.remove('active');
+        this.showComparison();
+    }
+
+    showComparison() {
+        const comparisonSection = document.getElementById('comparisonCharts');
+        const clearBtn = document.getElementById('clearComparison');
+        
+        if (this.selectedComparisonWorkouts.length > 0) {
+            comparisonSection.style.display = 'block';
+            clearBtn.style.display = 'block';
+            
+            // Update comparison chart based on selected metric
+            this.updateComparisonChart();
+        }
+    }
+
+    updateComparisonChart() {
+        if (this.selectedComparisonWorkouts.length === 0) return;
+        
+        // Clean up existing comparison maps before updating
+        if (this.comparisonMaps) {
+            this.comparisonMaps.forEach(map => {
+                if (map && typeof map.remove === 'function') {
+                    map.remove();
+                }
+            });
+            this.comparisonMaps = [];
+        }
+        
+        const metric = document.getElementById('comparisonMetric')?.value || 'heartrate';
+        const titleElement = document.getElementById('comparisonChartTitle');
+        
+        // Update title based on selected metric
+        const titles = {
+            'heartrate': 'Heart Rate Comparison',
+            'pace': 'Pace Comparison',
+            'cadence': 'Cadence Comparison',
+            'stride': 'Stride Length Comparison'
+        };
+        if (titleElement) {
+            titleElement.textContent = titles[metric] || 'Comparison';
+        }
+        
+        // Create the selected comparison chart
+        charts.createComparisonChart('comparisonChart', this.selectedComparisonWorkouts, metric, this.useMetric, this.maxHR);
+        
+        // Update comparison stats (which will recreate the maps)
+        this.updateComparisonStats(metric);
+    }
+
+    clearComparison() {
+        this.selectedComparisonWorkouts = [];
+        
+        // Destroy all comparison maps
+        if (this.comparisonMaps) {
+            this.comparisonMaps.forEach(map => {
+                if (map && typeof map.remove === 'function') {
+                    map.remove();
+                }
+            });
+            this.comparisonMaps = [];
+        }
+        
+        document.getElementById('comparisonCharts').style.display = 'none';
+        document.getElementById('clearComparison').style.display = 'none';
+        
+        // Destroy comparison chart
+        charts.destroyChart('comparisonChart');
+    }
+
+    updateComparisonStats(metric) {
+        const statsContainer = document.getElementById('comparisonStats');
+        if (!statsContainer) return;
+
+        statsContainer.innerHTML = this.selectedComparisonWorkouts.map((w, index) => {
+            const d = w.dateObj || new Date(w.date);
+            const dateStr = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+            const distanceKm = w.distanceKm || 0;
+            const distance = this.useMetric ? distanceKm : distanceKm / 1.60934;
+            const unit = this.useMetric ? 'km' : 'mi';
+            
+            // Get metric-specific stat
+            let metricValue = '--';
+            let metricLabel = '';
+            
+            switch(metric) {
+                case 'heartrate':
+                    metricLabel = 'Avg HR';
+                    metricValue = w.heartRateAvg ? Math.round(w.heartRateAvg) + ' bpm' : '--';
+                    break;
+                case 'pace':
+                    metricLabel = 'Avg Pace';
+                    let paceMinPerKm = w.pace || w.paceMinPerKm || 0;
+                    if (!paceMinPerKm && w.distanceKm && w.duration && w.distanceKm > 0 && w.duration > 0) {
+                        paceMinPerKm = w.duration / w.distanceKm;
+                    }
+                    metricValue = paceMinPerKm > 0
+                        ? this.formatPace(this.useMetric ? paceMinPerKm : paceMinPerKm * 1.60934) + `/${unit}`
+                        : '--';
+                    break;
+                case 'cadence':
+                    metricLabel = 'Avg Cadence';
+                    metricValue = w.cadenceAvg || w.cadence ? Math.round(w.cadenceAvg || w.cadence) + ' spm' : '--';
+                    break;
+                case 'stride':
+                    metricLabel = 'Avg Stride';
+                    metricValue = w.strideLengthAvg ? (w.strideLengthAvg * 100).toFixed(0) + ' cm' : '--';
+                    break;
+            }
+
+            return `
+                <div class="comparison-stat-card" style="
+                    background: var(--bg-card);
+                    border: 1px solid var(--border-color);
+                    border-radius: 12px;
+                    padding: 16px;
+                ">
+                    <h4 style="margin-bottom: 12px; color: var(--text-primary);">Run ${index + 1}: ${dateStr}</h4>
+                    <div style="font-size: 0.9rem;">
+                        <div style="margin-bottom: 8px;"><strong>Distance:</strong> ${distance.toFixed(2)} ${unit}</div>
+                        <div style="margin-bottom: 8px;"><strong>Duration:</strong> ${w.durationFormatted || '--:--'}</div>
+                        <div style="font-size: 1.1rem; color: var(--accent-primary); margin-top: 12px; margin-bottom: 12px;"><strong>${metricLabel}:</strong> ${metricValue}</div>
+                    </div>
+                    <div class="comparison-route-map" id="comparisonRouteMap_${index}" style="
+                        height: 250px; 
+                        width: 100%; 
+                        border-radius: 8px; 
+                        margin-top: 12px;
+                        background: var(--bg-tertiary);
+                        border: 1px solid var(--border-color);
+                    "></div>
+                </div>
+            `;
+        }).join('');
+
+        // Create route maps for each workout
+        this.selectedComparisonWorkouts.forEach((workout, index) => {
+            this.createComparisonRouteMap(workout, index);
+        });
+    }
+
+    // Create route map for comparison view
+    createComparisonRouteMap(workout, index) {
+        const mapContainer = document.getElementById(`comparisonRouteMap_${index}`);
+        if (!mapContainer) return;
+
+        // Find matching route
+        let matchingRoute = workout.matchingRoute;
+        
+        if (!matchingRoute) {
+            // Find route by time matching
+            const workoutTime = (workout.dateObj || new Date(workout.date)).getTime();
+            matchingRoute = this.routes.find(r => {
+                if (!r.startTime) return false;
+                const routeStart = r.startTime instanceof Date ? r.startTime.getTime() : new Date(r.startTime).getTime();
+                const timeDiff = Math.abs(routeStart - workoutTime);
+                return timeDiff < 5 * 60 * 1000; // 5 minutes tolerance
+            });
+        }
+
+        if (!matchingRoute || !matchingRoute.points || matchingRoute.points.length === 0) {
+            mapContainer.innerHTML = '<div style="display: flex; align-items: center; justify-content: center; height: 100%; color: var(--text-secondary);">No route data available</div>';
+            return;
+        }
+
+        // Destroy existing map if it exists
+        if (this.comparisonMaps && this.comparisonMaps[index]) {
+            this.comparisonMaps[index].remove();
+        }
+        if (!this.comparisonMaps) {
+            this.comparisonMaps = [];
+        }
+
+        // Wait a bit for the container to be visible
+        setTimeout(() => {
+            try {
+                // Create new map
+                const map = L.map(mapContainer, {
+                    zoomControl: true,
+                    attributionControl: true
+                }).setView([0, 0], 13);
+
+                L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+                    attribution: '&copy; OpenStreetMap contributors &copy; CARTO'
+                }).addTo(map);
+
+                // Create route line
+                const coordinates = matchingRoute.points.map(p => [p.lat, p.lon]);
+                const routeLine = L.polyline(coordinates, {
+                    color: '#ff6b35',
+                    weight: 4,
+                    opacity: 0.9
+                }).addTo(map);
+
+                // Add start/end markers
+                if (coordinates.length > 0) {
+                    L.marker(coordinates[0], {
+                        icon: L.divIcon({
+                            className: 'route-marker start',
+                            html: '<div style="background: #22c55e; color: white; width: 24px; height: 24px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 12px;">S</div>',
+                            iconSize: [24, 24],
+                            iconAnchor: [12, 12]
+                        })
+                    }).addTo(map);
+
+                    L.marker(coordinates[coordinates.length - 1], {
+                        icon: L.divIcon({
+                            className: 'route-marker end',
+                            html: '<div style="background: #ef4444; color: white; width: 24px; height: 24px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 12px;">F</div>',
+                            iconSize: [24, 24],
+                            iconAnchor: [12, 12]
+                        })
+                    }).addTo(map);
+                }
+
+                // Fit map to route bounds
+                map.fitBounds(routeLine.getBounds(), { padding: [20, 20] });
+                
+                // Invalidate size to ensure proper rendering
+                setTimeout(() => {
+                    map.invalidateSize();
+                }, 100);
+
+                // Store map reference
+                this.comparisonMaps[index] = map;
+            } catch (error) {
+                console.error('Error creating comparison route map:', error);
+                mapContainer.innerHTML = '<div style="display: flex; align-items: center; justify-content: center; height: 100%; color: var(--text-secondary);">Error loading map</div>';
+            }
+        }, 100);
     }
 
     // Save planned workout
