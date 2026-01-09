@@ -188,8 +188,9 @@ class ChartManager {
                         }
                     },
                     y: {
-                        reverse: true, // Lower pace (faster) is better - at top
-                        min: Math.max(0, minPace - padding),
+                        type: 'linear',
+                        beginAtZero: true,
+                        min: 0,
                         max: maxPace + padding,
                         ticks: {
                             color: '#606070',
