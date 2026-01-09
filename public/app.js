@@ -17,6 +17,7 @@ class App {
         this.pageSize = 20;
         this.useMetric = true;
         this.maxHR = 190;
+        this.restingHR = 60;
         this.sortColumn = 'date';
         this.sortDirection = 'desc';
         this.deduplicateWorkouts = true; // Merge similar Apple/Strava workouts
@@ -351,10 +352,12 @@ class App {
             // Load settings
             this.useMetric = await db.getSetting('useMetric', true);
             this.maxHR = await db.getSetting('maxHR', 190);
+            this.restingHR = await db.getSetting('restingHR', 60);
 
             // Update UI with loaded settings
             this.updateUnitToggle();
             document.getElementById('maxHR').value = this.maxHR;
+            document.getElementById('restingHR').value = this.restingHR;
 
             // Update Apple Health status
             const appleWorkouts = this.workouts.filter(w => w.source === 'apple');
@@ -486,11 +489,42 @@ class App {
 
         // Max HR setting
         document.getElementById('maxHR').addEventListener('change', async (e) => {
-            this.maxHR = parseInt(e.target.value) || 190;
+            const newMaxHR = parseInt(e.target.value) || 190;
+            // Validate that max HR > resting HR
+            if (this.restingHR && newMaxHR <= this.restingHR) {
+                alert(`Max HR must be greater than Resting HR (${this.restingHR} bpm). Please adjust your values.`);
+                e.target.value = this.maxHR;
+                return;
+            }
+            this.maxHR = newMaxHR;
             try {
                 await db.setSetting('maxHR', this.maxHR);
             } catch (e) {
                 console.error('Failed to save maxHR setting:', e);
+            }
+            this.updateCharts();
+        });
+
+        // Resting HR setting
+        document.getElementById('restingHR').addEventListener('change', async (e) => {
+            const newRestingHR = parseInt(e.target.value) || 60;
+            // Validate that resting HR < max HR
+            if (this.maxHR && newRestingHR >= this.maxHR) {
+                alert(`Resting HR must be less than Max HR (${this.maxHR} bpm). Please adjust your values.`);
+                e.target.value = this.restingHR;
+                return;
+            }
+            // Validate reasonable range
+            if (newRestingHR < 30 || newRestingHR > 100) {
+                alert('Resting HR should be between 30 and 100 bpm. Please enter a valid value.');
+                e.target.value = this.restingHR;
+                return;
+            }
+            this.restingHR = newRestingHR;
+            try {
+                await db.setSetting('restingHR', this.restingHR);
+            } catch (e) {
+                console.error('Failed to save restingHR setting:', e);
             }
             this.updateCharts();
         });
@@ -672,17 +706,15 @@ class App {
             const range = e.target.value;
             const customRangeDiv = document.getElementById('customDateRange');
             if (range === 'custom') {
-                customRangeDiv.style.display = 'flex';
-                customRangeDiv.style.alignItems = 'center';
+                customRangeDiv.classList.add('active');
             } else {
-                customRangeDiv.style.display = 'none';
+                customRangeDiv.classList.remove('active');
             }
             this.updateCharts();
         });
         
-        // Custom date range inputs
-        document.getElementById('startDate')?.addEventListener('change', () => this.updateCharts());
-        document.getElementById('endDate')?.addEventListener('change', () => this.updateCharts());
+        // Custom date picker setup
+        this.setupCustomDatePicker();
         
         // Comparison controls
         document.getElementById('openComparisonModal')?.addEventListener('click', () => this.openComparisonModal());
@@ -700,6 +732,232 @@ class App {
 
         // Routes page event listeners
         this.setupRoutesEventListeners();
+    }
+
+    // Setup custom date picker
+    setupCustomDatePicker() {
+        const modal = document.getElementById('datePickerModal');
+        const startInput = document.getElementById('startDate');
+        const endInput = document.getElementById('endDate');
+        const prevBtn = document.getElementById('datePickerPrevMonth');
+        const nextBtn = document.getElementById('datePickerNextMonth');
+        const monthYearEl = document.getElementById('datePickerMonthYear');
+        const daysContainer = document.getElementById('datePickerDays');
+        const todayBtn = document.getElementById('datePickerToday');
+        const clearBtn = document.getElementById('datePickerClear');
+
+        let currentDate = new Date();
+        let currentMonth = currentDate.getMonth();
+        let currentYear = currentDate.getFullYear();
+        let activeInput = null;
+        let selectedStartDate = null;
+        let selectedEndDate = null;
+
+        // Open date picker when clicking on date inputs
+        [startInput, endInput].forEach(input => {
+            input.addEventListener('click', (e) => {
+                e.preventDefault();
+                activeInput = input;
+                const existingDate = input === startInput ? selectedStartDate : selectedEndDate;
+                if (existingDate) {
+                    currentMonth = existingDate.getMonth();
+                    currentYear = existingDate.getFullYear();
+                }
+                renderCalendar();
+                modal.classList.add('active');
+            });
+        });
+
+        // Close modal when clicking outside
+        modal.addEventListener('click', (e) => {
+            if (e.target === modal) {
+                modal.classList.remove('active');
+            }
+        });
+
+        // Navigation
+        prevBtn.addEventListener('click', () => {
+            currentMonth--;
+            if (currentMonth < 0) {
+                currentMonth = 11;
+                currentYear--;
+            }
+            renderCalendar();
+        });
+
+        nextBtn.addEventListener('click', () => {
+            currentMonth++;
+            if (currentMonth > 11) {
+                currentMonth = 0;
+                currentYear++;
+            }
+            renderCalendar();
+        });
+
+        // Today button
+        todayBtn.addEventListener('click', () => {
+            const today = new Date();
+            selectDate(today);
+        });
+
+        // Store reference to app instance
+        const appInstance = this;
+
+        // Clear button
+        clearBtn.addEventListener('click', () => {
+            if (activeInput === startInput) {
+                selectedStartDate = null;
+                startInput.value = '';
+            } else {
+                selectedEndDate = null;
+                endInput.value = '';
+            }
+            appInstance.updateCharts();
+            modal.classList.remove('active');
+        });
+
+        function renderCalendar() {
+            const firstDay = new Date(currentYear, currentMonth, 1);
+            const lastDay = new Date(currentYear, currentMonth + 1, 0);
+            const daysInMonth = lastDay.getDate();
+            const startingDayOfWeek = firstDay.getDay();
+
+            monthYearEl.textContent = firstDay.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+
+            daysContainer.innerHTML = '';
+
+            // Previous month days
+            const prevMonth = currentMonth === 0 ? 11 : currentMonth - 1;
+            const prevYear = currentMonth === 0 ? currentYear - 1 : currentYear;
+            const daysInPrevMonth = new Date(prevYear, prevMonth + 1, 0).getDate();
+
+            for (let i = startingDayOfWeek - 1; i >= 0; i--) {
+                const day = daysInPrevMonth - i;
+                const date = new Date(prevYear, prevMonth, day);
+                const dayEl = createDayElement(date, true);
+                daysContainer.appendChild(dayEl);
+            }
+
+            // Current month days
+            for (let day = 1; day <= daysInMonth; day++) {
+                const date = new Date(currentYear, currentMonth, day);
+                const dayEl = createDayElement(date, false);
+                daysContainer.appendChild(dayEl);
+            }
+
+            // Next month days to fill the grid
+            const totalCells = daysContainer.children.length;
+            const remainingCells = 42 - totalCells; // 6 rows × 7 days
+            const nextMonth = currentMonth === 11 ? 0 : currentMonth + 1;
+            const nextYear = currentMonth === 11 ? currentYear + 1 : currentYear;
+
+            for (let day = 1; day <= remainingCells; day++) {
+                const date = new Date(nextYear, nextMonth, day);
+                const dayEl = createDayElement(date, true);
+                daysContainer.appendChild(dayEl);
+            }
+        }
+
+        function createDayElement(date, isOtherMonth) {
+            const dayEl = document.createElement('div');
+            dayEl.className = 'date-picker-day';
+            dayEl.textContent = date.getDate();
+
+            if (isOtherMonth) {
+                dayEl.classList.add('other-month');
+            }
+
+            const today = new Date();
+            if (date.toDateString() === today.toDateString()) {
+                dayEl.classList.add('today');
+            }
+
+            // Check if date is selected
+            if (selectedStartDate && date.toDateString() === selectedStartDate.toDateString()) {
+                dayEl.classList.add('selected', 'range-start');
+            }
+            if (selectedEndDate && date.toDateString() === selectedEndDate.toDateString()) {
+                dayEl.classList.add('selected', 'range-end');
+            }
+
+            // Check if date is in range
+            if (selectedStartDate && selectedEndDate) {
+                if (date > selectedStartDate && date < selectedEndDate) {
+                    dayEl.classList.add('in-range');
+                }
+            }
+
+            dayEl.addEventListener('click', () => {
+                if (!isOtherMonth) {
+                    selectDate(date);
+                }
+            });
+
+            return dayEl;
+        }
+
+        function selectDate(date) {
+            if (activeInput === startInput) {
+                selectedStartDate = new Date(date);
+                startInput.value = formatDate(selectedStartDate);
+                
+                // If end date is before start date, clear it
+                if (selectedEndDate && selectedEndDate < selectedStartDate) {
+                    selectedEndDate = null;
+                    endInput.value = '';
+                }
+                
+                // If end date is set, close modal. Otherwise switch to end date input
+                if (selectedEndDate) {
+                    modal.classList.remove('active');
+                } else {
+                    activeInput = endInput;
+                    renderCalendar();
+                }
+            } else {
+                // Selecting end date
+                if (!selectedStartDate || date >= selectedStartDate) {
+                    selectedEndDate = new Date(date);
+                    endInput.value = formatDate(selectedEndDate);
+                    modal.classList.remove('active');
+                } else {
+                    // End date is before start date, swap them
+                    selectedEndDate = selectedStartDate;
+                    selectedStartDate = new Date(date);
+                    startInput.value = formatDate(selectedStartDate);
+                    endInput.value = formatDate(selectedEndDate);
+                    modal.classList.remove('active');
+                }
+            }
+
+            appInstance.updateCharts();
+        }
+
+        function formatDate(date) {
+            const month = String(date.getMonth() + 1).padStart(2, '0');
+            const day = String(date.getDate()).padStart(2, '0');
+            const year = date.getFullYear();
+            return `${month}/${day}/${year}`;
+        }
+
+        // Parse existing dates from inputs on load
+        function parseDateFromInput(input) {
+            const value = input.value;
+            if (!value) return null;
+            
+            // Handle MM/DD/YYYY format
+            const parts = value.split('/');
+            if (parts.length === 3) {
+                return new Date(parseInt(parts[2]), parseInt(parts[0]) - 1, parseInt(parts[1]));
+            }
+            return null;
+        }
+
+        // Load existing dates
+        const existingStart = parseDateFromInput(startInput);
+        const existingEnd = parseDateFromInput(endInput);
+        if (existingStart) selectedStartDate = existingStart;
+        if (existingEnd) selectedEndDate = existingEnd;
     }
 
     // Setup routes page event listeners
@@ -1514,10 +1772,17 @@ class App {
             if (startDateInput && !startDateInput.value) {
                 const defaultStart = new Date();
                 defaultStart.setDate(defaultStart.getDate() - 365);
-                startDateInput.value = defaultStart.toISOString().split('T')[0];
+                const month = String(defaultStart.getMonth() + 1).padStart(2, '0');
+                const day = String(defaultStart.getDate()).padStart(2, '0');
+                const year = defaultStart.getFullYear();
+                startDateInput.value = `${month}/${day}/${year}`;
             }
             if (endDateInput && !endDateInput.value) {
-                endDateInput.value = new Date().toISOString().split('T')[0];
+                const defaultEnd = new Date();
+                const month = String(defaultEnd.getMonth() + 1).padStart(2, '0');
+                const day = String(defaultEnd.getDate()).padStart(2, '0');
+                const year = defaultEnd.getFullYear();
+                endDateInput.value = `${month}/${day}/${year}`;
             }
             this.updateCharts();
         } else if (page === 'calendar') {
@@ -2383,8 +2648,26 @@ class App {
         let filtered = this.workouts;
 
         if (range === 'custom') {
-            const startDate = document.getElementById('startDate')?.value;
-            const endDate = document.getElementById('endDate')?.value;
+            const startDateStr = document.getElementById('startDate')?.value;
+            const endDateStr = document.getElementById('endDate')?.value;
+            
+            // Parse dates from MM/DD/YYYY format
+            let startDate = null;
+            let endDate = null;
+            
+            if (startDateStr) {
+                const parts = startDateStr.split('/');
+                if (parts.length === 3) {
+                    startDate = `${parts[2]}-${parts[0].padStart(2, '0')}-${parts[1].padStart(2, '0')}`;
+                }
+            }
+            
+            if (endDateStr) {
+                const parts = endDateStr.split('/');
+                if (parts.length === 3) {
+                    endDate = `${parts[2]}-${parts[0].padStart(2, '0')}-${parts[1].padStart(2, '0')}`;
+                }
+            }
             
             if (startDate && endDate) {
                 const start = new Date(startDate);
@@ -2409,7 +2692,7 @@ class App {
 
         // Use deduplicated workouts for analytics
         filtered = this.deduplicateWorkoutsList([...filtered]);
-        charts.updateAllCharts(filtered, this.useMetric, this.maxHR);
+        charts.updateAllCharts(filtered, this.useMetric, this.maxHR, this.restingHR);
     }
 
     // Comparison functionality
@@ -2582,7 +2865,7 @@ class App {
         }
         
         // Create the selected comparison chart
-        charts.createComparisonChart('comparisonChart', this.selectedComparisonWorkouts, metric, this.useMetric, this.maxHR);
+        charts.createComparisonChart('comparisonChart', this.selectedComparisonWorkouts, metric, this.useMetric, this.maxHR, this.restingHR);
         
         // Update comparison stats (which will recreate the maps)
         this.updateComparisonStats(metric);
@@ -3543,6 +3826,79 @@ class App {
         return vo2max;
     }
 
+    // Helper: Calculate HR zone using Karvonen Formula (Heart Rate Reserve method)
+    // Returns zone number (0-4) or null if invalid
+    getHRZone(hrValue, maxHR = null, restingHR = null) {
+        // Use instance values if not provided
+        maxHR = maxHR || this.maxHR;
+        restingHR = restingHR !== null ? restingHR : this.restingHR;
+
+        // Edge case handling
+        if (!hrValue || hrValue <= 0 || !maxHR || maxHR <= 0) return null;
+        
+        // If resting HR is not set or invalid, fallback to simple percentage method
+        if (!restingHR || restingHR <= 0 || restingHR >= maxHR) {
+            // Fallback: use simple percentage of max HR
+            const percentMax = hrValue / maxHR;
+            if (percentMax < 0.6) return 0;
+            if (percentMax < 0.7) return 1;
+            if (percentMax < 0.8) return 2;
+            if (percentMax < 0.9) return 3;
+            return 4;
+        }
+
+        // Calculate Heart Rate Reserve (HRR)
+        const hrr = maxHR - restingHR;
+        if (hrr <= 0) return null;
+
+        // Calculate what percentage of HRR the current HR represents
+        // Rearrange Karvonen: HR = ((Max HR - Resting HR) × % intensity) + Resting HR
+        // To find % intensity: % intensity = (HR - Resting HR) / (Max HR - Resting HR)
+        const hrPercent = (hrValue - restingHR) / hrr;
+
+        // Determine zone based on HRR percentage
+        if (hrPercent < 0.6) return 0;  // Zone 1: 50-60% of HRR
+        if (hrPercent < 0.7) return 1;  // Zone 2: 60-70% of HRR
+        if (hrPercent < 0.8) return 2;  // Zone 3: 70-80% of HRR
+        if (hrPercent < 0.9) return 3;  // Zone 4: 80-90% of HRR
+        return 4;  // Zone 5: 90-100% of HRR
+    }
+
+    // Helper: Calculate HR zone boundaries using Karvonen Formula
+    // Returns array of zone objects with min/max HR values
+    getHRZoneBoundaries(maxHR = null, restingHR = null) {
+        maxHR = maxHR || this.maxHR;
+        restingHR = restingHR !== null ? restingHR : this.restingHR;
+
+        // If resting HR is not set or invalid, return null to indicate fallback
+        if (!restingHR || restingHR <= 0 || restingHR >= maxHR) {
+            return null; // Indicates should use simple percentage method
+        }
+
+        const hrr = maxHR - restingHR;
+        if (hrr <= 0) return null;
+
+        const zoneIntensities = [0.5, 0.6, 0.7, 0.8, 0.9, 1.0];
+        const zones = [
+            { name: 'Zone 1 (Recovery)', min: 0.5, max: 0.6, color: '#10b981' },
+            { name: 'Zone 2 (Aerobic)', min: 0.6, max: 0.7, color: '#3b82f6' },
+            { name: 'Zone 3 (Tempo)', min: 0.7, max: 0.8, color: '#f59e0b' },
+            { name: 'Zone 4 (Threshold)', min: 0.8, max: 0.9, color: '#f97316' },
+            { name: 'Zone 5 (Max)', min: 0.9, max: 1.0, color: '#ef4444' }
+        ];
+
+        // Calculate actual HR values for each zone boundary
+        return zones.map(z => {
+            const minHR = (hrr * z.min) + restingHR;
+            const maxHR = (hrr * z.max) + restingHR;
+            return {
+                ...z,
+                minHR: Math.round(minHR),
+                maxHR: Math.round(maxHR)
+            };
+        });
+    }
+
     // Create HR zones chart for workout detail modal
     createHRZonesChart(workout) {
         const ctx = document.getElementById('detailHRZonesChart');
@@ -3554,13 +3910,24 @@ class App {
         }
 
         const maxHR = this.maxHR;
-        const zones = [
-            { name: 'Zone 1 (Recovery)', min: 0.5, max: 0.6, color: '#10b981' },
-            { name: 'Zone 2 (Aerobic)', min: 0.6, max: 0.7, color: '#3b82f6' },
-            { name: 'Zone 3 (Tempo)', min: 0.7, max: 0.8, color: '#f59e0b' },
-            { name: 'Zone 4 (Threshold)', min: 0.8, max: 0.9, color: '#f97316' },
-            { name: 'Zone 5 (Max)', min: 0.9, max: 1.0, color: '#ef4444' }
-        ];
+        const restingHR = this.restingHR;
+        
+        // Get zone boundaries
+        let zoneBoundaries = this.getHRZoneBoundaries(maxHR, restingHR);
+        const useHRR = zoneBoundaries !== null;
+        
+        // Fallback zones if HRR not available
+        if (!zoneBoundaries) {
+            zoneBoundaries = [
+                { name: 'Zone 1 (Recovery)', min: 0.5, max: 0.6, color: '#10b981' },
+                { name: 'Zone 2 (Aerobic)', min: 0.6, max: 0.7, color: '#3b82f6' },
+                { name: 'Zone 3 (Tempo)', min: 0.7, max: 0.8, color: '#f59e0b' },
+                { name: 'Zone 4 (Threshold)', min: 0.8, max: 0.9, color: '#f97316' },
+                { name: 'Zone 5 (Max)', min: 0.9, max: 1.0, color: '#ef4444' }
+            ];
+        }
+
+        const zones = zoneBoundaries;
 
         // Calculate zone distribution
         let zoneMinutes = [0, 0, 0, 0, 0];
@@ -3569,13 +3936,10 @@ class App {
             // Use detailed HR data
             workout.heartRateData.forEach((hr, i) => {
                 const hrValue = hr.value || hr;
-                const percentMax = hrValue / maxHR;
-
-                if (percentMax < 0.6) zoneMinutes[0]++;
-                else if (percentMax < 0.7) zoneMinutes[1]++;
-                else if (percentMax < 0.8) zoneMinutes[2]++;
-                else if (percentMax < 0.9) zoneMinutes[3]++;
-                else zoneMinutes[4]++;
+                const zone = this.getHRZone(hrValue, maxHR, restingHR);
+                if (zone !== null && zone >= 0 && zone <= 4) {
+                    zoneMinutes[zone]++;
+                }
             });
 
             // Convert to approximate minutes (assuming ~1 sample per second)
@@ -3583,12 +3947,13 @@ class App {
             zoneMinutes = zoneMinutes.map(z => z / sampleRate);
         } else if (workout.heartRateAvg) {
             // Estimate based on average HR
-            const percentMax = workout.heartRateAvg / maxHR;
-            const primaryZone = percentMax < 0.6 ? 0 : percentMax < 0.7 ? 1 :
-                               percentMax < 0.8 ? 2 : percentMax < 0.9 ? 3 : 4;
-            zoneMinutes[primaryZone] = workout.duration * 0.7;
-            if (primaryZone > 0) zoneMinutes[primaryZone - 1] = workout.duration * 0.2;
-            if (primaryZone < 4) zoneMinutes[primaryZone + 1] = workout.duration * 0.1;
+            const zone = this.getHRZone(workout.heartRateAvg, maxHR, restingHR);
+            if (zone !== null && zone >= 0 && zone <= 4) {
+                const primaryZone = zone;
+                zoneMinutes[primaryZone] = workout.duration * 0.7;
+                if (primaryZone > 0) zoneMinutes[primaryZone - 1] = workout.duration * 0.2;
+                if (primaryZone < 4) zoneMinutes[primaryZone + 1] = workout.duration * 0.1;
+            }
         }
 
         const total = zoneMinutes.reduce((a, b) => a + b, 0) || 1;
@@ -3633,13 +3998,19 @@ class App {
         // Update legend
         const legend = document.getElementById('detailHRZonesLegend');
         if (!legend) return;
-        legend.innerHTML = zones.map((z, i) => `
-            <div class="zone-legend-item">
-                <span class="zone-legend-color" style="background: ${z.color}"></span>
-                <span class="zone-legend-text">${z.name}</span>
-                <span class="zone-legend-percent">${zonePercents[i]}%</span>
-            </div>
-        `).join('');
+        legend.innerHTML = zones.map((z, i) => {
+            let zoneText = z.name;
+            if (useHRR && z.minHR !== undefined && z.maxHR !== undefined) {
+                zoneText += ` (${z.minHR}-${z.maxHR} bpm)`;
+            }
+            return `
+                <div class="zone-legend-item">
+                    <span class="zone-legend-color" style="background: ${z.color}"></span>
+                    <span class="zone-legend-text">${zoneText}</span>
+                    <span class="zone-legend-percent">${zonePercents[i]}%</span>
+                </div>
+            `;
+        }).join('');
     }
 
     // Create pace detail chart
@@ -3821,14 +4192,13 @@ class App {
             return;
         }
 
-        // Function to get zone color based on HR value
+        // Function to get zone color based on HR value using Karvonen formula
         const getZoneColor = (hr) => {
-            const percent = hr / maxHR;
-            if (percent < 0.6) return '#10b981'; // Zone 1 - Green
-            if (percent < 0.7) return '#3b82f6'; // Zone 2 - Blue
-            if (percent < 0.8) return '#f59e0b'; // Zone 3 - Yellow/Amber
-            if (percent < 0.9) return '#f97316'; // Zone 4 - Orange
-            return '#ef4444'; // Zone 5 - Red
+            const zone = this.getHRZone(hr, maxHR, this.restingHR);
+            if (zone === null) return '#9ca3af'; // Gray for invalid
+            
+            const zoneColors = ['#10b981', '#3b82f6', '#f59e0b', '#f97316', '#ef4444'];
+            return zoneColors[zone] || '#9ca3af';
         };
 
         // Create segment colors based on HR zones

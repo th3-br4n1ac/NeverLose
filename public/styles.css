@@ -364,6 +364,277 @@ body {
     gap: 12px;
 }
 
+.custom-date-range {
+    display: none;
+    align-items: center;
+    gap: 10px;
+}
+
+.custom-date-range.active {
+    display: flex;
+}
+
+.date-input {
+    padding: 10px 16px;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    color: var(--text-primary);
+    font-family: inherit;
+    font-size: 0.9rem;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.date-input:focus {
+    outline: none;
+    border-color: var(--accent-primary);
+}
+
+.date-input:hover {
+    border-color: var(--accent-primary);
+}
+
+/* Style date input calendar icon and text color for webkit browsers */
+.date-input::-webkit-calendar-picker-indicator {
+    filter: invert(1);
+    opacity: 0.7;
+    cursor: pointer;
+    transition: opacity 0.2s;
+}
+
+.date-input::-webkit-calendar-picker-indicator:hover {
+    opacity: 1;
+}
+
+.date-input::-webkit-datetime-edit-text,
+.date-input::-webkit-datetime-edit-month-field,
+.date-input::-webkit-datetime-edit-day-field,
+.date-input::-webkit-datetime-edit-year-field {
+    color: var(--text-primary);
+    padding: 0 2px;
+}
+
+.date-input::-webkit-datetime-edit-text:focus,
+.date-input::-webkit-datetime-edit-month-field:focus,
+.date-input::-webkit-datetime-edit-day-field:focus,
+.date-input::-webkit-datetime-edit-year-field:focus {
+    background-color: transparent;
+    color: var(--text-primary);
+    outline: none;
+}
+
+/* Note: Native date picker calendar popup cannot be fully styled with CSS.
+   The calendar modal is rendered by the browser and styling is very limited.
+   For full dark theme support, a custom date picker would be needed. */
+
+/* Attempt to style the date picker popup where possible (very limited browser support) */
+.date-input::-webkit-inner-spin-button,
+.date-input::-webkit-outer-spin-button {
+    display: none;
+}
+
+/* Firefox date input styling */
+.date-input[type="date"] {
+    color-scheme: dark;
+}
+
+/* Additional date input styling for better consistency */
+.date-input::placeholder {
+    color: var(--text-secondary);
+    opacity: 0.6;
+}
+
+.date-separator {
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+    font-weight: 500;
+}
+
+/* ===== Custom Date Picker Modal ===== */
+.date-picker-modal {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.7);
+    backdrop-filter: blur(4px);
+    z-index: 10000;
+    align-items: center;
+    justify-content: center;
+}
+
+.date-picker-modal.active {
+    display: flex;
+}
+
+.date-picker-content {
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 16px;
+    padding: 24px;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+    min-width: 320px;
+    max-width: 380px;
+}
+
+.date-picker-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 20px;
+}
+
+.date-picker-nav {
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    color: var(--text-primary);
+    width: 36px;
+    height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: all 0.2s;
+    font-size: 1.2rem;
+}
+
+.date-picker-nav:hover {
+    background: var(--bg-hover);
+    border-color: var(--accent-primary);
+    color: var(--accent-primary);
+}
+
+.date-picker-month-year {
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    cursor: pointer;
+    padding: 8px 12px;
+    border-radius: 8px;
+    transition: all 0.2s;
+}
+
+.date-picker-month-year:hover {
+    background: var(--bg-tertiary);
+}
+
+.date-picker-calendar {
+    margin-bottom: 16px;
+}
+
+.date-picker-weekdays {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: 4px;
+    margin-bottom: 8px;
+}
+
+.date-picker-weekdays div {
+    text-align: center;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+    padding: 8px 4px;
+}
+
+.date-picker-days {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: 4px;
+}
+
+.date-picker-day {
+    aspect-ratio: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 0.9rem;
+    transition: all 0.2s;
+    color: var(--text-primary);
+    background: transparent;
+    border: 1px solid transparent;
+}
+
+.date-picker-day:hover {
+    background: var(--bg-hover);
+    border-color: var(--border-color);
+}
+
+.date-picker-day.other-month {
+    color: var(--text-muted);
+    opacity: 0.4;
+}
+
+.date-picker-day.today {
+    border-color: var(--accent-primary);
+    background: rgba(255, 107, 53, 0.1);
+    font-weight: 600;
+}
+
+.date-picker-day.selected {
+    background: var(--accent-primary);
+    color: white;
+    font-weight: 600;
+    border-color: var(--accent-primary);
+}
+
+.date-picker-day.in-range {
+    background: rgba(255, 107, 53, 0.2);
+    border-color: rgba(255, 107, 53, 0.4);
+}
+
+.date-picker-day.range-start,
+.date-picker-day.range-end {
+    background: var(--accent-primary);
+    color: white;
+    font-weight: 600;
+}
+
+.date-picker-footer {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    margin-top: 16px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border-color);
+}
+
+.date-picker-btn {
+    flex: 1;
+    padding: 10px 16px;
+    border-radius: 8px;
+    border: 1px solid var(--border-color);
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+    font-family: inherit;
+    font-size: 0.9rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.date-picker-btn:hover {
+    background: var(--bg-hover);
+    border-color: var(--accent-primary);
+}
+
+.date-picker-btn-today {
+    background: var(--accent-primary);
+    border-color: var(--accent-primary);
+    color: white;
+}
+
+.date-picker-btn-today:hover {
+    background: var(--accent-secondary);
+    border-color: var(--accent-secondary);
+}
+
 .comparison-section {
     margin-top: 32px;
 }

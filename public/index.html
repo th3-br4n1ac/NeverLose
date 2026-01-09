@@ -217,10 +217,10 @@
                                 <option value="all">All Time</option>
                                 <option value="custom">Custom Range</option>
                             </select>
-                            <div id="customDateRange" style="display: none; margin-left: 10px;">
-                                <input type="date" id="startDate" style="margin-right: 8px;">
-                                <span>to</span>
-                                <input type="date" id="endDate" style="margin-left: 8px;">
+                            <div id="customDateRange" class="custom-date-range">
+                                <input type="text" id="startDate" class="date-input" readonly placeholder="Start date">
+                                <span class="date-separator">to</span>
+                                <input type="text" id="endDate" class="date-input" readonly placeholder="End date">
                             </div>
                         </div>
                     </div>
@@ -486,8 +486,20 @@
                     </div>
                 </div>
                 <div class="setting-group">
-                    <label>Heart Rate Zones (based on max HR)</label>
-                    <input type="number" id="maxHR" value="190" min="140" max="220">
+                    <label>Heart Rate Zones (Karvonen Method)</label>
+                    <div style="display: flex; flex-direction: column; gap: 8px;">
+                        <div>
+                            <label for="maxHR" style="display: block; margin-bottom: 4px; font-size: 0.9rem;">Max HR (bpm)</label>
+                            <input type="number" id="maxHR" value="190" min="140" max="220">
+                        </div>
+                        <div>
+                            <label for="restingHR" style="display: block; margin-bottom: 4px; font-size: 0.9rem;">Resting HR (bpm)</label>
+                            <input type="number" id="restingHR" value="60" min="30" max="100">
+                        </div>
+                        <div style="font-size: 0.8rem; color: var(--text-secondary); margin-top: 4px;">
+                            Using Heart Rate Reserve (HRR) method: Target HR = ((Max HR - Resting HR) × % intensity) + Resting HR
+                        </div>
+                    </div>
                 </div>
                 <div class="setting-group">
                     <h4>Data Management</h4>
@@ -720,6 +732,33 @@
                     <div id="detailRouteMap" style="height: 300px; border-radius: 12px;"></div>
                     <div class="route-detail-stats" id="detailRouteStats"></div>
                 </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Custom Date Picker Modal -->
+    <div id="datePickerModal" class="date-picker-modal">
+        <div class="date-picker-content">
+            <div class="date-picker-header">
+                <button class="date-picker-nav" id="datePickerPrevMonth">←</button>
+                <div class="date-picker-month-year" id="datePickerMonthYear">January 2025</div>
+                <button class="date-picker-nav" id="datePickerNextMonth">→</button>
+            </div>
+            <div class="date-picker-calendar">
+                <div class="date-picker-weekdays">
+                    <div>Su</div>
+                    <div>Mo</div>
+                    <div>Tu</div>
+                    <div>We</div>
+                    <div>Th</div>
+                    <div>Fr</div>
+                    <div>Sa</div>
+                </div>
+                <div class="date-picker-days" id="datePickerDays"></div>
+            </div>
+            <div class="date-picker-footer">
+                <button class="date-picker-btn date-picker-btn-clear" id="datePickerClear">Clear</button>
+                <button class="date-picker-btn date-picker-btn-today" id="datePickerToday">Today</button>
             </div>
         </div>
     </div>

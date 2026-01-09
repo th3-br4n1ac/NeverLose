@@ -46,8 +46,8 @@ class ChartManager {
         const canvas = document.getElementById(canvasId);
         if (!canvas) return;
 
-        // Get last 12 weeks of data
-        const weeklyData = this.aggregateByWeek(workouts, 12);
+        // Get weekly data based on actual workout date range
+        const weeklyData = this.aggregateByWeekFromWorkouts(workouts);
         const unit = useMetric ? 'km' : 'mi';
         
         this.charts[canvasId] = new Chart(canvas.getContext('2d'), {
@@ -124,18 +124,42 @@ class ChartManager {
         const canvas = document.getElementById(canvasId);
         if (!canvas) return;
 
-        // Get workouts sorted by date with valid pace
+        // Get workouts sorted by date with valid pace - use ALL workouts in the filtered range
         const paceData = workouts
             .filter(w => w.pace && w.pace > 0 && w.pace < 20)
-            .sort((a, b) => new Date(a.date) - new Date(b.date))
-            .slice(-50); // Last 50 workouts
+            .sort((a, b) => {
+                const dateA = a.dateObj || new Date(a.date);
+                const dateB = b.dateObj || new Date(b.date);
+                return dateA - dateB;
+            });
 
+        if (paceData.length === 0) return;
+
+        // Create labels with full date information for better clarity
         const labels = paceData.map(w => {
-            const d = new Date(w.date);
-            return `${d.getMonth() + 1}/${d.getDate()}`;
+            const d = w.dateObj || new Date(w.date);
+            // Show month/day, but include year if date range spans multiple years
+            const dates = paceData.map(w2 => {
+                const d2 = w2.dateObj || new Date(w2.date);
+                return d2.getFullYear();
+            });
+            const minYear = Math.min(...dates);
+            const maxYear = Math.max(...dates);
+            const needsYear = minYear !== maxYear;
+            
+            if (needsYear) {
+                return `${d.getMonth() + 1}/${d.getDate()}/${d.getFullYear().toString().slice(-2)}`;
+            } else {
+                return `${d.getMonth() + 1}/${d.getDate()}`;
+            }
         });
 
         const paces = paceData.map(w => useMetric ? w.pace : w.pace * 1.60934);
+        
+        // Calculate min and max for better axis scaling
+        const minPace = Math.min(...paces);
+        const maxPace = Math.max(...paces);
+        const padding = (maxPace - minPace) * 0.1 || 0.5;
         
         this.charts[canvasId] = new Chart(canvas.getContext('2d'), {
             type: 'line',
@@ -155,12 +179,27 @@ class ChartManager {
                 ...this.defaultOptions,
                 scales: {
                     ...this.defaultOptions.scales,
+                    x: {
+                        ...this.defaultOptions.scales.x,
+                        title: {
+                            display: true,
+                            text: 'Date',
+                            color: '#606070'
+                        }
+                    },
                     y: {
                         ...this.defaultOptions.scales.y,
-                        reverse: true, // Lower pace is better
+                        reverse: true, // Lower pace (faster) is better - at top
+                        min: Math.max(0, minPace - padding),
+                        max: maxPace + padding,
                         ticks: {
                             color: '#606070',
                             callback: (val) => this.formatPace(val)
+                        },
+                        title: {
+                            display: true,
+                            text: `Pace (min/${useMetric ? 'km' : 'mi'})`,
+                            color: '#606070'
                         }
                     }
                 },
@@ -168,7 +207,13 @@ class ChartManager {
                     ...this.defaultOptions.plugins,
                     tooltip: {
                         callbacks: {
-                            label: (ctx) => `Pace: ${this.formatPace(ctx.parsed.y)} /${useMetric ? 'km' : 'mi'}`
+                            label: (ctx) => `Pace: ${this.formatPace(ctx.parsed.y)} /${useMetric ? 'km' : 'mi'}`,
+                            title: (ctx) => {
+                                const index = ctx[0].dataIndex;
+                                const workout = paceData[index];
+                                const d = workout.dateObj || new Date(workout.date);
+                                return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+                            }
                         }
                     }
                 }
@@ -177,14 +222,14 @@ class ChartManager {
     }
 
     // Create heart rate zones chart
-    createHRZonesChart(canvasId, workouts, maxHR = 190) {
+    createHRZonesChart(canvasId, workouts, maxHR = 190, restingHR = null) {
         this.destroyChart(canvasId);
         
         const canvas = document.getElementById(canvasId);
         if (!canvas) return;
 
-        // Calculate zone distribution based on average HR
-        const zones = this.calculateHRZones(workouts, maxHR);
+        // Calculate zone distribution based on average HR using Karvonen formula
+        const zones = this.calculateHRZones(workouts, maxHR, restingHR);
         
         this.charts[canvasId] = new Chart(canvas.getContext('2d'), {
             type: 'doughnut',
@@ -232,7 +277,8 @@ class ChartManager {
         const canvas = document.getElementById(canvasId);
         if (!canvas) return;
 
-        const weeklyData = this.aggregateByWeek(workouts, 12);
+        // Calculate appropriate number of weeks based on the date range of workouts
+        const weeklyData = this.aggregateByWeekFromWorkouts(workouts);
         
         this.charts[canvasId] = new Chart(canvas.getContext('2d'), {
             type: 'bar',
@@ -370,6 +416,68 @@ class ChartManager {
         return { labels, distances, durations, counts };
     }
 
+    // Helper: Aggregate workouts by week based on actual workout date range
+    aggregateByWeekFromWorkouts(workouts) {
+        if (workouts.length === 0) {
+            return { labels: [], distances: [], durations: [], counts: [] };
+        }
+
+        // Find the date range of workouts
+        const dates = workouts.map(w => {
+            const d = w.dateObj || new Date(w.date);
+            return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+        });
+        const minDate = new Date(Math.min(...dates));
+        const maxDate = new Date(Math.max(...dates));
+
+        // Start from the beginning of the week containing the earliest workout
+        const firstWeekStart = new Date(minDate);
+        firstWeekStart.setDate(firstWeekStart.getDate() - firstWeekStart.getDay());
+        firstWeekStart.setHours(0, 0, 0, 0);
+
+        // End at the end of the week containing the latest workout
+        const lastWeekEnd = new Date(maxDate);
+        lastWeekEnd.setDate(lastWeekEnd.getDate() + (6 - lastWeekEnd.getDay()));
+        lastWeekEnd.setHours(23, 59, 59, 999);
+
+        // Calculate number of weeks
+        const weeksDiff = Math.ceil((lastWeekEnd - firstWeekStart) / (7 * 24 * 60 * 60 * 1000));
+        const numWeeks = Math.max(1, weeksDiff);
+
+        const labels = [];
+        const distances = [];
+        const durations = [];
+        const counts = [];
+
+        for (let i = 0; i < numWeeks; i++) {
+            const weekStart = new Date(firstWeekStart);
+            weekStart.setDate(weekStart.getDate() + (i * 7));
+            
+            const weekEnd = new Date(weekStart);
+            weekEnd.setDate(weekEnd.getDate() + 7);
+
+            const weekWorkouts = workouts.filter(w => {
+                const d = new Date(w.dateObj || new Date(w.date));
+                d.setHours(0, 0, 0, 0);
+                return d >= weekStart && d < weekEnd;
+            });
+
+            // Format label - show year if range spans multiple years
+            const needsYear = firstWeekStart.getFullYear() !== lastWeekEnd.getFullYear();
+            if (needsYear) {
+                labels.push(`${weekStart.getMonth() + 1}/${weekStart.getDate()}/${weekStart.getFullYear().toString().slice(-2)}`);
+            } else {
+                labels.push(`${weekStart.getMonth() + 1}/${weekStart.getDate()}`);
+            }
+
+            distances.push(weekWorkouts.reduce((sum, w) => sum + (w.distanceKm || 0), 0));
+            durations.push(weekWorkouts.reduce((sum, w) => sum + (w.duration || 0), 0));
+            counts.push(weekWorkouts.length);
+        }
+
+        return { labels, distances, durations, counts };
+    }
+
     // Helper: Aggregate workouts by month
     aggregateByMonth(workouts) {
         const monthMap = new Map();
@@ -402,18 +510,31 @@ class ChartManager {
         return { labels, distances, durations };
     }
 
-    // Helper: Calculate HR zones distribution
-    calculateHRZones(workouts, maxHR) {
+    // Helper: Calculate HR zones distribution using Karvonen Formula (Heart Rate Reserve)
+    calculateHRZones(workouts, maxHR, restingHR = null) {
         const zones = [0, 0, 0, 0, 0];
-        const thresholds = [0.5, 0.6, 0.7, 0.8, 0.9]; // Zone boundaries as % of max
+
+        // Edge case: if resting HR is not set or invalid, fallback to simple percentage method
+        const useHRR = restingHR !== null && restingHR > 0 && restingHR < maxHR;
+        const hrr = useHRR ? (maxHR - restingHR) : null;
 
         workouts.forEach(w => {
-            if (w.heartRateAvg) {
-                const hrPercent = w.heartRateAvg / maxHR;
-                if (hrPercent < thresholds[1]) zones[0]++;
-                else if (hrPercent < thresholds[2]) zones[1]++;
-                else if (hrPercent < thresholds[3]) zones[2]++;
-                else if (hrPercent < thresholds[4]) zones[3]++;
+            if (w.heartRateAvg && w.heartRateAvg > 0) {
+                let hrPercent;
+                
+                if (useHRR && hrr > 0) {
+                    // Karvonen formula: % intensity = (HR - Resting HR) / (Max HR - Resting HR)
+                    hrPercent = (w.heartRateAvg - restingHR) / hrr;
+                } else {
+                    // Fallback: simple percentage of max HR
+                    hrPercent = w.heartRateAvg / maxHR;
+                }
+
+                // Determine zone based on HRR percentage (same thresholds)
+                if (hrPercent < 0.6) zones[0]++;
+                else if (hrPercent < 0.7) zones[1]++;
+                else if (hrPercent < 0.8) zones[2]++;
+                else if (hrPercent < 0.9) zones[3]++;
                 else zones[4]++;
             }
         });
@@ -430,22 +551,22 @@ class ChartManager {
     }
 
     // Update all charts
-    updateAllCharts(workouts, useMetric = true, maxHR = 190) {
+    updateAllCharts(workouts, useMetric = true, maxHR = 190, restingHR = null) {
         this.createWeeklyMileageChart('weeklyMileageChart', workouts, useMetric);
         this.createDistanceChart('distanceChart', workouts, useMetric);
         this.createPaceChart('paceChart', workouts, useMetric);
-        this.createHRZonesChart('hrZonesChart', workouts, maxHR);
+        this.createHRZonesChart('hrZonesChart', workouts, maxHR, restingHR);
         this.createVolumeChart('volumeChart', workouts);
         this.createDayDistributionChart('dayDistributionChart', workouts);
     }
 
     // Create comparison chart with overlayed data for selected metric
-    createComparisonChart(canvasId, workouts, metric, useMetric = true, maxHR = 190) {
+    createComparisonChart(canvasId, workouts, metric, useMetric = true, maxHR = 190, restingHR = null) {
         this.destroyChart(canvasId);
         
         switch(metric) {
             case 'heartrate':
-                this.createComparisonHRChart(canvasId, workouts, useMetric, maxHR);
+                this.createComparisonHRChart(canvasId, workouts, useMetric, maxHR, restingHR);
                 break;
             case 'pace':
                 this.createComparisonPaceChart(canvasId, workouts, useMetric);
@@ -539,7 +660,7 @@ class ChartManager {
     }
 
     // Create comparison HR chart
-    createComparisonHRChart(canvasId, workouts, useMetric, maxHR) {
+    createComparisonHRChart(canvasId, workouts, useMetric, maxHR, restingHR = null) {
         const canvas = document.getElementById(canvasId);
         if (!canvas) return;
 
