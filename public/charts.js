@@ -188,7 +188,6 @@ class ChartManager {
                         }
                     },
                     y: {
-                        ...this.defaultOptions.scales.y,
                         reverse: true, // Lower pace (faster) is better - at top
                         min: Math.max(0, minPace - padding),
                         max: maxPace + padding,
@@ -196,6 +195,7 @@ class ChartManager {
                             color: '#606070',
                             callback: (val) => this.formatPace(val)
                         },
+                        grid: { color: 'rgba(42, 42, 58, 0.5)' },
                         title: {
                             display: true,
                             text: `Pace (min/${useMetric ? 'km' : 'mi'})`,
